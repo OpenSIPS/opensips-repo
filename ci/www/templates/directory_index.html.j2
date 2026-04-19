@@ -1,0 +1,37 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<h1>Index of {{ display_path }}</h1>
+
+<section id="files">
+  <table class="repo-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Modified</th>
+        <th class="size">Size</th>
+      </tr>
+    </thead>
+    <tbody>
+{% if parent_href %}
+      <tr>
+        <td><a href="{{ parent_href }}">../</a></td>
+        <td></td>
+        <td class="size"></td>
+      </tr>
+{% endif %}
+{% for entry in entries %}
+      <tr>
+        <td><a href="{{ entry.href }}">{{ entry.name }}</a></td>
+        <td>{{ entry.modified }}</td>
+        <td class="size">{{ entry.size }}</td>
+      </tr>
+{% endfor %}
+{% if not entries %}
+      <tr>
+        <td class="empty-state" colspan="3">No files.</td>
+      </tr>
+{% endif %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

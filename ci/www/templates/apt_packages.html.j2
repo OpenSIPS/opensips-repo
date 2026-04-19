@@ -1,0 +1,114 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<script>
+const repoData = {{ data | tojson }};
+
+function option(value, label, selectedValue) {
+  const item = document.createElement("option");
+  item.value = value;
+  item.textContent = label;
+  if (value === selectedValue) item.selected = true;
+  return item;
+}
+
+function fillSelect(select, values, selectedValue, valueKey, labelKey) {
+  select.innerHTML = "";
+  values.forEach((item) => select.appendChild(option(item[valueKey], item[labelKey], selectedValue)));
+}
+
+function selectedFromQuery(name, fallback) {
+  const params = new URLSearchParams(window.location.search);
+  return params.get(name) || fallback;
+}
+
+function getCommand() {
+  const suite = document.getElementById("os").value;
+  const version = document.getElementById("ver").value;
+  const type = document.getElementById("type").value;
+  const server = window.location.host || new URL(repoData.apt_repo_url).host;
+  const keyUrl = repoData.apt_repo_url + "/opensips-org.gpg";
+  const component = version === repoData.master_ver ? "devel" : version + "-" + type;
+  const gpg = "[signed-by=/usr/share/keyrings/opensips-org.gpg]";
+
+  document.getElementById("keyCommand").textContent =
+    "curl " + keyUrl + " -o /usr/share/keyrings/opensips-org.gpg";
+  document.getElementById("sourceCommand").textContent =
+    "echo \"deb " + gpg + "\" \\\n" +
+    "  \"https://" + server + " " + suite + " " + component + "\" \\\n" +
+    "  >/etc/apt/sources.list.d/opensips.list";
+  document.getElementById("installCommand").textContent =
+    "apt-get update && apt-get install opensips";
+  document.getElementById("recom").textContent =
+    type === "nightly" ? "Not recommended for production usage" : "";
+}
+
+function init() {
+  const osSelect = document.getElementById("os");
+  const verSelect = document.getElementById("ver");
+  if (repoData.deb_targets.length === 0 || repoData.versions.length === 0) return;
+  fillSelect(osSelect, repoData.deb_targets, selectedFromQuery("os", repoData.deb_targets[0].suite), "suite", "label");
+  fillSelect(verSelect, repoData.versions, selectedFromQuery("v", repoData.versions[0].value), "value", "label");
+  getCommand();
+}
+
+window.addEventListener("DOMContentLoaded", init);
+</script>
+
+<h1>Repository DEBs</h1>
+
+{% if data.deb_targets and data.versions %}
+<section id="package-selector">
+  <h2>Package selector</h2>
+  <div class="form-grid">
+    <div class="form-row">
+      <label for="os">OS</label>
+      <select id="os" onchange="getCommand()"></select>
+    </div>
+    <div class="form-row">
+      <label for="ver">OpenSIPS version</label>
+      <select id="ver" onchange="getCommand()"></select>
+    </div>
+    <div class="form-row">
+      <label for="type">Build type</label>
+      <select id="type" onchange="getCommand()">
+        <option value="releases" selected>release</option>
+        <option value="nightly">nightly</option>
+      </select>
+    </div>
+  </div>
+  <div id="recom" class="notice"></div>
+</section>
+
+<section id="commands">
+  <div class="command-heading">
+    <h2>Commands</h2>
+    <button class="copy-all-command-button" type="button" onclick="copyCommandList(this)">Copy all</button>
+  </div>
+  <div class="command-list">
+    <div class="command-row">
+      <span class="command-step">1</span>
+      <div class="command-body">
+        <button class="copy-command-button" type="button" onclick="copyCommand(this)">Copy</button>
+        <code id="keyCommand"></code>
+      </div>
+    </div>
+    <div class="command-row">
+      <span class="command-step">2</span>
+      <div class="command-body">
+        <button class="copy-command-button" type="button" onclick="copyCommand(this)">Copy</button>
+        <code class="multiline-command" id="sourceCommand"></code>
+      </div>
+    </div>
+    <div class="command-row">
+      <span class="command-step">3</span>
+      <div class="command-body">
+        <button class="copy-command-button" type="button" onclick="copyCommand(this)">Copy</button>
+        <code id="installCommand"></code>
+      </div>
+    </div>
+  </div>
+</section>
+{% else %}
+<p class="empty-state">No APT targets or OpenSIPS versions are configured.</p>
+{% endif %}
+{% endblock %}

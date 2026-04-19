@@ -1,0 +1,58 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<h1>{{ site_title }}</h1>
+<p class="lead">{{ description }}</p>
+
+<section id="releases">
+  <h2>OpenSIPS Releases</h2>
+  <ul class="repo-list">
+{% for version in versions %}
+    <li>
+      <a class="item-title" href="/packages.html?v={{ version.value }}">{{ version.label }}</a>
+{% if version.is_master %}
+      <span class="item-note">development branch</span>
+{% endif %}
+    </li>
+{% endfor %}
+{% if not versions %}
+    <li class="empty-state">No OpenSIPS versions configured.</li>
+{% endif %}
+  </ul>
+</section>
+
+<section id="platforms">
+  <h2>Supported Platforms</h2>
+  <ul class="repo-list">
+{% for target in targets %}
+{% if repo_kind == "apt" %}
+    <li><a class="item-title" href="/packages.html?os={{ target.suite }}">{{ target.label }}</a></li>
+{% else %}
+    <li><a class="item-title" href="/packages.html?os={{ target.value | replace('/', '') }}">{{ target.label }}</a></li>
+{% endif %}
+{% endfor %}
+{% if not targets %}
+    <li class="empty-state">No {{ package_name }} targets configured.</li>
+{% endif %}
+  </ul>
+</section>
+
+<section id="architectures">
+  <h2>Supported Architectures</h2>
+  <ul class="repo-list">
+{% for arch in arches %}
+    <li><span class="item-title">{{ arch }}</span></li>
+{% endfor %}
+{% if not arches %}
+    <li class="empty-state">No architectures configured.</li>
+{% endif %}
+  </ul>
+</section>
+
+<section id="build-periods">
+  <h2>Build Periods</h2>
+  <ul>
+    <li><strong>Releases</strong>: after each release is published.</li>
+    <li><strong>Nightly builds</strong>: every night when new commits are available in the Git repository.</li>
+  </ul>
+</section>
+{% endblock %}

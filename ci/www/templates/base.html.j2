@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <title>{{ page_title }}</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="nofollow,noarchive">
+  <link rel="stylesheet" href="/opensips.css" type="text/css">
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <script>
+function fallbackCopyText(text) {
+  const area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "fixed";
+  area.style.top = "-1000px";
+  document.body.appendChild(area);
+  area.select();
+  document.execCommand("copy");
+  document.body.removeChild(area);
+}
+
+function setCopyButtonState(button, label) {
+  const oldLabel = button.textContent;
+  button.textContent = label;
+  window.setTimeout(() => {
+    button.textContent = oldLabel;
+  }, 1200);
+}
+
+async function copyTextToClipboard(button, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    setCopyButtonState(button, "Copied");
+  } catch (_error) {
+    fallbackCopyText(text);
+    setCopyButtonState(button, "Copied");
+  }
+}
+
+async function copyCommand(button) {
+  const code = button.closest(".command-body").querySelector("code");
+  await copyTextToClipboard(button, code.textContent.trim());
+}
+
+async function copyCommandList(button) {
+  const section = button.closest("#commands");
+  const text = Array.from(section.querySelectorAll(".command-body code"))
+    .map((code) => code.textContent.trim())
+    .join("\n");
+  await copyTextToClipboard(button, text);
+}
+  </script>
+</head>
+<body>
+<header class="site-header">
+  <div class="site-header-inner">
+    <a class="site-logo" href="{{ opensips_site_url | default('https://www.opensips.org') }}" aria-label="OpenSIPS">
+      <img src="/opensips-logo.png" alt="OpenSIPS">
+    </a>
+    <div class="site-section-title">{{ site_title | replace("OpenSIPS | ", "") }}</div>
+    <nav class="site-nav" aria-label="Repository navigation">
+{% for item in nav %}
+      <a class="{% if item.active | default(false) %}is-active{% endif %}" href="{{ item.href }}" title="{{ item.title }}">{{ item.label }}</a>
+{% endfor %}
+    </nav>
+  </div>
+</header>
+
+<main class="page-main">
+  <article class="content-panel">
+{% block content %}{% endblock %}
+  </article>
+</main>
+</body>
+</html>

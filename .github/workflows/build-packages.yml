@@ -1,0 +1,134 @@
+name: Build packages
+
+on:
+  schedule:
+    - cron: '18 1 * * *'
+      timezone: Europe/Brussels
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Build mode'
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - nightly
+          - release
+          - cli
+          - www
+      tag:
+        description: 'OpenSIPS source tag for release mode, for example 3.6.5 or 3.6.0-beta. Leave empty for latest.'
+        type: string
+        required: false
+      build_what:
+        description: 'Space-separated OpenSIPS major versions, for example "4.0 3.6". Leave empty for all.'
+        type: string
+        required: false
+      build_for:
+        description: 'Space-separated build targets, for example: debian-bookworm/amd64 el-9/x86_64. Leave empty for all.'
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare:
+    name: Prepare build matrix
+    # The runner is registered with --no-default-labels, so a generic
+    # runs-on: self-hosted job cannot grab it.
+    runs-on: [repo]
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      count: ${{ steps.matrix.outputs.count }}
+    steps:
+      - name: Checkout opensips-repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate build matrix
+        id: matrix
+        env:
+          INPUT_MODE: ${{ github.event_name == 'schedule' && 'nightly' || inputs.mode || 'all' }}
+          INPUT_TAG: ${{ inputs.tag || '' }}
+          INPUT_BUILD_WHAT: ${{ inputs.build_what || '' }}
+          INPUT_BUILD_FOR: ${{ inputs.build_for || '' }}
+        run: |
+          matrix_file="${RUNNER_TEMP}/build-matrix.json"
+          skipped_file="${RUNNER_TEMP}/build-matrix-skipped.md"
+          : > "$skipped_file"
+          BUILD_MATRIX_SKIPPED_FILE="$skipped_file" bash ci/build-matrix.sh | tee "$matrix_file"
+          matrix="$(cat "$matrix_file")"
+          count="$(jq '.include | length' "$matrix_file")"
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+          printf 'count=%s\n' "$count" >> "$GITHUB_OUTPUT"
+          {
+            printf '### Build matrix\n\n'
+            if [[ "$count" -eq 0 ]]; then
+              printf 'No build jobs generated.\n'
+            else
+              printf '%s\n' "$matrix" | jq -r '.include[] | "- \(.display)\(if .tag != "" then " / " + .tag else "" end)"'
+            fi
+            if [[ -s "$skipped_file" ]]; then
+              printf '\n### Skipped existing packages\n\n'
+              cat "$skipped_file"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: ${{ matrix.display }}
+    needs: prepare
+    if: ${{ needs.prepare.outputs.count != '0' }}
+    runs-on: [repo]
+    timeout-minutes: 1440
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout opensips-repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Run OpenSIPS package build
+        env:
+          INPUT_MODE: ${{ matrix.mode }}
+          INPUT_TAG: ${{ matrix.tag }}
+          INPUT_BUILD_WHAT: ${{ matrix.version }}
+          INPUT_BUILD_FOR: ${{ matrix.target }}
+          BUILD_PROJECT: ${{ matrix.project }}
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+          APT_GPG_PASSPHRASE: ${{ secrets.APT_GPG_PASSPHRASE }}
+        run: |
+          # cd /opt/build/opensips
+          ci/run-build.sh
+
+      - name: Cleanup
+        if: always()
+        run: |
+          gpgconf --homedir "${RUNNER_TEMP}/opensips-apt-gnupg" --kill all 2>/dev/null || true
+          rm -rf "${RUNNER_TEMP}/opensips-apt-gnupg"
+          rm -f "${RUNNER_TEMP}/opensips-apt-gpg-passphrase"
+
+  website:
+    name: Generate repository website
+    needs: [prepare, build]
+    if: ${{ always() && needs.prepare.result == 'success' && needs.build.result != 'cancelled' }}
+    runs-on: [repo]
+    steps:
+      - name: Checkout opensips-repo
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate static repository website
+        run: |
+          python3 -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("jinja2") is None)' || python3 -m pip install --user -r ci/requirements.txt
+          python3 ci/generate-www.py

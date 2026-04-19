@@ -1,0 +1,210 @@
+#! /bin/bash
+#   pbuilder -- personal Debian package builder
+#   Copyright © 2001-2007 Junichi Uekawa <dancer@debian.org>
+#               2006-2007 Loïc Minier <lool@dooz.org>
+#
+#   This program is free software; you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation; either version 2 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#   You should have received a copy of the GNU General Public License
+#   along with this program; if not, write to the Free Software
+#   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+###############################################################################
+
+# module to satisfy build dependencies; experimental flavor
+
+# can test this with:
+# testsuite/random-manual-test-material/build-depends-on-experimental:
+# sudo pbuilder --build --configfile config bde_0.1.dsc
+
+set -e
+
+. "${BASH_SOURCE%/*}/pbuilder-satisfydepends-funcs"
+
+# Use this function to fulfill the dependency (almost)
+function checkbuilddep_internal () {
+    local ARCH=$($CHROOTEXEC dpkg-architecture -qDEB_HOST_ARCH)
+    local INSTALLPKG
+    local INSTALLPKGLIST
+    local INSTALLPKGMULTI
+    local CURRENTREALPKGNAME
+    local SATISFIED
+    local PACKAGEVERSIONS
+    local CANDIDATE_VERSION
+    local APTFLAG="-o APT::Install-Recommends=false"
+    echo " -> Attempting to parse the build-deps"
+    for INSTALLPKGMULTI in $(get_build_deps |
+	tr " " "/" | \
+	awk 'BEGIN{RS=","} {print}'); do
+      echo " -> Considering build-dep$(echo "$INSTALLPKGMULTI" | tr "/" " " )"
+      SATISFIED="no"
+      for INSTALLPKG in $(echo "$INSTALLPKGMULTI" | \
+	  awk 'BEGIN{RS="|"} {print}'); do
+	CURRENTREALPKGNAME=$(echo "$INSTALLPKG" | sed -e 's#^/*##' -e 's#[[/(].*##')
+	if echo "$INSTALLPKG" | grep -q '\['; then
+	    if checkbuilddep_archdeps "$INSTALLPKG" "$ARCH"; then
+		SATISFIED="yes"
+		echo "   -> This package is not for this architecture"
+		continue
+	    fi
+	fi
+	if echo "$INSTALLPKG" | grep -q '<'; then
+	    if checkbuilddep_restrictiondeps "$INSTALLPKG" "$DEB_BUILD_PROFILES"; then
+		SATISFIED="yes"
+		echo "   -> This package is not for the current build profiles"
+		continue
+	    fi
+	fi
+
+	CURRENT_APT_COMMAND="$(versioneddep_to_aptcmd "$INSTALLPKG")"
+
+	while [ "$SATISFIED" = "no" ]; do
+	    echo "   -> Trying to add $CURRENT_APT_COMMAND"
+	    if APT_OUTPUT="$( exec 2>&1; LC_ALL=C $CHROOTEXEC apt-get -s install $APTFLAG $INSTALLPKGLIST $CURRENT_APT_COMMAND )"; then
+		# success, we're done
+		SATISFIED="yes"
+		INSTALLPKGLIST="$INSTALLPKGLIST $CURRENT_APT_COMMAND"
+		break
+	    fi
+	    # try to parse APT's output to recognize lines such as:
+	    #   libfoo-dev: Depends: bar (>= xyz) but www is to be installed
+	    DEP_INSTALLPKG="$(echo "$APT_OUTPUT" | \
+		sed -n \
+		    -e "s/^ *.*: *Depends: *\(.*\) but.*is to be installed\$/\\1/p" \
+		    -e "s/^ *.*: *Depends: *\(.*\) but it is not going to be installed\$/\\1/p" \
+		    -e "s/^ *.*: *Depends: *\(.*\)\$/\\1/p" | \
+		head -1 | \
+		tr " " "/")"
+	    APT_ADD_COMMAND="$(versioneddep_to_aptcmd "$DEP_INSTALLPKG")"
+	    if echo "$CURRENT_APT_COMMAND" | grep -q "$APT_ADD_COMMAND"; then
+		# loop detected, give up with real packages
+		echo "   -> Loop detected, last APT error was: ======"
+		echo "$APT_OUTPUT"
+		echo "   -> ========================================="
+		echo "   -> (not adding $APT_ADD_COMMAND to $CURRENT_APT_COMMAND)"
+		break
+	    fi
+	    CURRENT_APT_COMMAND="$CURRENT_APT_COMMAND $APT_ADD_COMMAND"
+	done
+	if [ "$SATISFIED" = "yes" ]; then
+	    break;
+	fi
+
+	echo "       -> Cannot install $CURRENT_APT_COMMAND; apt errors follow:"
+	if $CHROOTEXEC apt-get -s install $APTFLAG $INSTALLPKGLIST "$CURRENT_APT_COMMAND"; then
+	    :
+	fi
+	# package could not be found. -- looking for alternative.
+	PROVIDED=""
+	checkbuilddep_provides "$CURRENTREALPKGNAME"
+	if [ -n "$PROVIDED" ]; then
+	    # something provides this package
+	    echo "     -> Considering $PROVIDED to satisfy the dependency "
+	    if $CHROOTEXEC apt-get -s install $APTFLAG $INSTALLPKGLIST $PROVIDED >& /dev/null; then
+		SATISFIED="yes";
+		INSTALLPKGLIST="$INSTALLPKGLIST $PROVIDED"
+	    else
+		# show the error for diagnostic purposes
+		echo "       -> Cannot install $PROVIDED; apt errors follow:"
+		if $CHROOTEXEC apt-get -s install $APTFLAG $INSTALLPKGLIST $PROVIDED; then
+		    :
+		fi
+	    fi
+	fi
+	if [ "$SATISFIED" = "yes" ]; then
+	    break;
+	fi
+      done;
+      if [ "$SATISFIED" = "no" ]; then
+	  echo "E: Could not satisfy build-dependency." >&2
+	  if [ "$CONTINUE_FAIL" != "yes" ]; then
+	      exit 2
+	  fi
+      fi
+    done;
+    
+    # now actually install the packages
+    echo " -> Installing $INSTALLPKGLIST"
+    if ! $CHROOTEXEC apt-get -q -y "${APTGETOPT[@]}" $APTFLAG install $INSTALLPKGLIST; then
+	echo " -> Trying to fix apt error"
+	# Work around an apt bug which causes configure to fail.
+	if $CHROOTEXEC dpkg --configure --pending && $CHROOTEXEC apt-get -q -y "${APTGETOPT[@]}" $APTFLAG install $INSTALLPKGLIST; then
+	    echo " -> Apt bug workaround succeeded"
+	elif [ "$CONTINUE_FAIL" != "yes" ]; then
+	    echo "E: Unrecoverable error installing build-dependencies." >&2
+	    exit 1
+	fi
+    fi
+
+    # start processing build-conflicts.
+    for INSTALLPKG in $(get_build_conflicts |
+	tr " " "/" | \
+	awk 'BEGIN{RS=","} {print}'); do
+      CURRENTREALPKGNAME=$(echo "$INSTALLPKG" | sed -e 's#^/*##' -e 's#[[/(].*##')
+      echo " -> Considering $CURRENTREALPKGNAME"
+      
+      if echo "$INSTALLPKG" | grep -q '\['; then
+	  # this package has arch-conflicts.
+	  if checkbuilddep_archdeps "$INSTALLPKG" "$ARCH"; then
+	      echo "I: Ignoring other-arch"
+	      continue
+	  fi
+      fi
+      if echo "$INSTALLPKG" | grep -q '<'; then
+	  # this package has build-profiles-conflicts.
+	  if checkbuilddep_restrictiondeps "$INSTALLPKG" "$DEB_BUILD_PROFILES"; then
+	      echo "I: Ignoring other-buildprofiles"
+	      continue
+	  fi
+      fi
+      if echo "$INSTALLPKG" | grep -q '('; then
+	  # this package has version-conflicts
+	  if ! checkbuilddep_versiondeps $CURRENTREALPKGNAME \
+		$(echo "$INSTALLPKG" | tr "/" " " | sed 's/^.*( *\(<<\|<=\|>=\|=\|<\|>>\|>\) *\(.*\)).*$/\1/') \
+		$(echo "$INSTALLPKG" | tr "/" " " | sed 's/^.*( *\(<<\|<=\|>=\|=\|<\|>>\|>\) *\(.*\)).*$/\2/'); then
+	      echo "I: Satisfies version, not trying"
+	      continue
+	  fi
+      fi
+
+      # if package exists, remove it.
+      if $CHROOTEXEC dpkg -s $(echo "$INSTALLPKG" | tr "/" " " | awk '{print $1}') 2>&1 | grep -q ^Package:; then
+	  if ! $CHROOTEXEC apt-get -q -y remove $CURRENTREALPKGNAME ; then
+	      echo "E: Could not satisfy build-conflicts" >&2
+	      exit 1
+	  fi
+      else
+	  echo "I: $CURRENTREALPKGNAME package is not installed, no need to remove"
+      fi
+    done
+    echo " -> Finished parsing the build-deps"
+}
+
+
+function print_help () {
+    # print out help message
+    cat <<EOF
+pbuilder-satisfydepends -- satisfy dependencies
+Copyright 2002-2007  Junichi Uekawa <dancer@debian.org>
+
+--help:        give help
+--control:     specify control file (debian/control, *.dsc)
+--chroot:      operate inside chroot
+--binary-all:  include binary-all
+--binary-arch: include binary-arch only
+--echo:        echo mode, do nothing. (--force-version required for most operation)
+--force-version: skip version check.
+--continue-fail: continue even when failed.
+
+EOF
+}
+
+. "${BASH_SOURCE%/*}/pbuilder-satisfydepends-checkparams"
+

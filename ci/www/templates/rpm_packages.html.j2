@@ -1,0 +1,111 @@
+{% extends "base.html.j2" %}
+{% block content %}
+<script>
+const repoData = {{ data | tojson }};
+
+function option(value, label, selectedValue) {
+  const item = document.createElement("option");
+  item.value = value;
+  item.textContent = label;
+  if (value === selectedValue) item.selected = true;
+  return item;
+}
+
+function selectedFromQuery(name, fallback) {
+  const params = new URLSearchParams(window.location.search);
+  return params.get(name) || fallback;
+}
+
+function compactOs(value) {
+  return value.replace("/", "");
+}
+
+function fillOsSelect(selectedValue) {
+  const select = document.getElementById("os");
+  select.innerHTML = "";
+  repoData.rpm_targets.forEach((item) => {
+    const selected = item.value === selectedValue || compactOs(item.value) === selectedValue;
+    select.appendChild(option(item.value, item.label, selected ? item.value : selectedValue));
+  });
+}
+
+function getLink() {
+  const os = document.getElementById("os").value;
+  const arch = "x86_64";
+  const version = document.getElementById("ver").value;
+  const type = document.getElementById("type").value;
+  const target = repoData.rpm_targets.find((item) => item.value === os);
+  const server = window.location.host || new URL(repoData.rpm_repo_url).host;
+  const repoType = version === repoData.master_ver ? "devel" : type;
+  const packageName =
+    "opensips-repo-" + repoType + "-" + version + "-" + repoData.rpm_repo_package_release +
+    "." + target.pure + ".noarch.rpm";
+  const link = "https://" + server + "/" + version + "/" + repoType + "/" + target.value + "/" + arch + "/" + packageName;
+  const command = "dnf install " + link;
+  document.getElementById("installCommand").textContent = command;
+  document.getElementById("dlink").href = link;
+  document.getElementById("epel").style.display =
+    target.id === "el" || target.id === "st" ? "block" : "none";
+  document.getElementById("recom").textContent =
+    type === "nightly" ? "Not recommended for production usage" : "";
+}
+
+function init() {
+  if (repoData.rpm_targets.length === 0 || repoData.versions.length === 0) return;
+  const osDefault = compactOs(repoData.rpm_targets[0].value);
+  fillOsSelect(selectedFromQuery("os", osDefault));
+
+  const verSelect = document.getElementById("ver");
+  const selectedVersion = selectedFromQuery("v", repoData.versions[0].value);
+  repoData.versions.forEach((item) => verSelect.appendChild(option(item.value, item.label, selectedVersion)));
+  getLink();
+}
+
+window.addEventListener("DOMContentLoaded", init);
+</script>
+
+<h1>Repository RPMs</h1>
+
+{% if data.rpm_targets and data.versions %}
+<p class="lead">Select a target platform to get the matching OpenSIPS repository package.</p>
+
+<section id="package-selector">
+  <h2>Package selector</h2>
+  <div class="form-grid">
+    <div class="form-row">
+      <label for="os">OS</label>
+      <select id="os" onchange="getLink()"></select>
+    </div>
+    <div class="form-row">
+      <label for="ver">OpenSIPS version</label>
+      <select id="ver" onchange="getLink()"></select>
+    </div>
+    <div class="form-row">
+      <label for="type">Build type</label>
+      <select id="type" onchange="getLink()">
+        <option value="releases" selected>release</option>
+        <option value="nightly">nightly</option>
+      </select>
+    </div>
+  </div>
+  <div id="recom" class="notice"></div>
+</section>
+
+<section id="commands">
+  <h2>Command</h2>
+  <div class="command-list">
+    <div class="command-row">
+      <span class="command-step">1</span>
+      <div class="command-body">
+        <button class="copy-command-button" type="button" onclick="copyCommand(this)">Copy</button>
+        <code class="long-command" id="installCommand"></code>
+      </div>
+    </div>
+  </div>
+  <p><a id="dlink" href="">Download repository RPM</a></p>
+  <p id="epel" class="notice">NOTE: You need to have EPEL repository installed because OpenSIPS packages depend on it.</p>
+</section>
+{% else %}
+<p class="empty-state">No RPM targets or OpenSIPS versions are configured.</p>
+{% endif %}
+{% endblock %}
