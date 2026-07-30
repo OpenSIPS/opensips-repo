@@ -26,8 +26,7 @@ for deb in "$@"; do
 done
 
 # Cleanup old nightly/devel files before reindexing. Release packages are never matched here.
-find "$FREIGHT_DIR" -name '*.deb' \( -path '*nightly*' -o -path '*devel*' \) -mtime +"$KEEP_DAYS" -type f -delete || true
-find "$FREIGHT_DIR" -name '*.deb-control' \( -path '*nightly*' -o -path '*devel*' \) -mtime +"$KEEP_DAYS" -type f -delete || true
+cleanup_expiring_deb_files "$FREIGHT_DIR"
 
 log "Reindexing APT suite $suite"
 freight-cache -c "$FREIGHT_CONF" "apt/${suite}"

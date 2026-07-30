@@ -403,9 +403,73 @@ sign_rpms() {
 cleanup_expiring_files() {
     local root="$1"
     [[ -d "$root" ]] || return 0
+    cleanup_expiring_package_files "$root" '*.rpm'
+}
+
+cleanup_expiring_deb_files() {
+    local root="$1"
+    [[ -d "$root" ]] || return 0
+    cleanup_expiring_package_files "$root" '*.deb'
+    cleanup_expiring_package_files "$root" '*.deb-control'
+}
+
+cleanup_expiring_package_files() {
+    local root="$1" pattern="$2"
+    local keep_file tmp_dir file
+    [[ -d "$root" ]] || return 0
+
+    tmp_dir="${WORK_DIR:-/tmp}"
+    mkdir -p "$tmp_dir"
+    keep_file="$(mktemp "$tmp_dir/cleanup-keep.XXXXXX")"
+
     find "$root" -type f \( -path '*nightly*' -o -path '*devel*' \) \
+        -name "$pattern" \
         -name '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' \
-        -mtime +"$KEEP_DAYS" -delete || true
+        -print \
+        | sort -V \
+        | awk '
+            function dir(path) {
+                sub(/\/[^\/]*$/, "", path)
+                return path
+            }
+            function basename(path, base) {
+                base = path
+                sub(/^.*\//, "", base)
+                return base
+            }
+            function group_key(path, base, key) {
+                base = basename(path)
+                key = base
+                sub(/_[0-9].*$/, "", key)
+                sub(/-[0-9][^-]*-[0-9].*$/, "", key)
+                return dir(path) "/" key
+            }
+            {
+                key = group_key($0)
+                if (last_file != "" && key != last_key) {
+                    print last_file
+                }
+                last_key = key
+                last_file = $0
+            }
+            END {
+                if (last_file != "") {
+                    print last_file
+                }
+            }
+        ' >"$keep_file"
+
+    while IFS= read -r file; do
+        grep -Fxq -- "$file" "$keep_file" && continue
+        rm -f -- "$file" || warn "Cannot remove expired package file: $file"
+    done < <(
+        find "$root" -type f \( -path '*nightly*' -o -path '*devel*' \) \
+            -name "$pattern" \
+            -name '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' \
+            -mtime +"$KEEP_DAYS" \
+            -print
+    )
+    rm -f "$keep_file"
 }
 
 archive_release_tarball() {
