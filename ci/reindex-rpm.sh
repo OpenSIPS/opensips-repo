@@ -21,3 +21,4 @@ fi
 log "Reindexing RPM repo $repo_dir"
 mkdir -p "$cache_dir/createrepo"
 createrepo_c --quiet --update --cachedir="$cache_dir/createrepo" "$repo_dir"
+refresh_repository_website

@@ -25,9 +25,10 @@ for deb in "$@"; do
   freight-add -c "$FREIGHT_CONF" "$deb" "apt/${suite}/${component}"
 done
 
-# Cleanup old files before reindexing
-find "$FREIGHT_DIR" -name '*.deb' -path '*nightly*' -mtime +"$KEEP_DAYS" -type f -delete || true
-find "$FREIGHT_DIR" -name '*.deb-control' -path '*nightly*' -mtime +"$KEEP_DAYS" -type f -delete || true
+# Cleanup old nightly/devel files before reindexing. Release packages are never matched here.
+find "$FREIGHT_DIR" -name '*.deb' \( -path '*nightly*' -o -path '*devel*' \) -mtime +"$KEEP_DAYS" -type f -delete || true
+find "$FREIGHT_DIR" -name '*.deb-control' \( -path '*nightly*' -o -path '*devel*' \) -mtime +"$KEEP_DAYS" -type f -delete || true
 
 log "Reindexing APT suite $suite"
 freight-cache -c "$FREIGHT_CONF" "apt/${suite}"
+refresh_repository_website

@@ -5,12 +5,10 @@
 set -o nounset
 set -o pipefail
 
-BUILD_WHAT="${BUILD_WHAT:-4.0 3.6}"
+BUILD_WHAT="${BUILD_WHAT:-4.0 3.6 devel}"
 BUILD_FOR="${BUILD_FOR:-ubuntu-resolute/amd64 ubuntu-noble/amd64 ubuntu-jammy/amd64 \
                         debian-trixie/amd64 debian-bookworm/amd64 debian-bullseye/amd64 \
                         el-9/x86_64 st-9/x86_64}"
-MASTER_VER="${MASTER_VER:-4.1}"
-ALLOW_RC_BETA="${ALLOW_RC_BETA:-4.1}"
 KEEP_DAYS=30
 
 BUILD_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.opensips-build"

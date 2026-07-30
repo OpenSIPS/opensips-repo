@@ -37,7 +37,6 @@ PUBLIC_KEY_SOURCE = KEYS_DIR / "opensips-org.asc"
 CONFIG_EXPORTS = (
     "BUILD_WHAT",
     "BUILD_FOR",
-    "MASTER_VER",
     "DEB_DIR",
     "RPM_DIR",
     "ARCHIVE_DIR",
@@ -181,7 +180,6 @@ def target_path_value(target: Target) -> str:
 def build_site_data() -> dict:
     versions = words(env("BUILD_WHAT"))
     targets = [target for item in words(env("BUILD_FOR")) if (target := parse_target(item))]
-    master_ver = env("MASTER_VER")
 
     deb_targets: list[dict] = []
     seen_deb_suites: set[str] = set()
@@ -217,16 +215,23 @@ def build_site_data() -> dict:
         "versions": [
             {
                 "value": version,
-                "label": f"OpenSIPS {version}",
-                "is_master": version == master_ver,
+                "label": "OpenSIPS devel" if version == "devel" else f"OpenSIPS {version}",
+                "is_devel": version == "devel",
             }
             for version in versions
+        ],
+        "package_versions": [
+            {
+                "value": version,
+                "label": f"OpenSIPS {version}",
+            }
+            for version in versions
+            if version != "devel"
         ],
         "deb_targets": deb_targets,
         "deb_arches": unique(target.arch for target in targets if target.is_deb),
         "rpm_targets": rpm_targets,
         "rpm_arches": unique(target.arch for target in targets if target.is_rpm),
-        "master_ver": master_ver,
         "opensips_site_url": env("OPENSIPS_SITE_URL", "https://www.opensips.org").rstrip("/"),
         "apt_repo_url": env("APT_REPO_URL", "https://apt.opensips.org").rstrip("/"),
         "rpm_repo_url": env("RPM_REPO_URL", "https://rpm.opensips.org").rstrip("/"),
@@ -494,7 +499,7 @@ def render_site() -> None:
         repo_kind="apt",
         package_name="DEBs",
         description="OpenSIPS Project official APT repository for Debian and Ubuntu packages.",
-        versions=data["versions"],
+        versions=data["package_versions"],
         targets=data["deb_targets"],
         arches=data["deb_arches"],
     )
@@ -534,7 +539,7 @@ def render_site() -> None:
         repo_kind="rpm",
         package_name="RPMs",
         description="OpenSIPS Project official DNF repository for Red Hat compatible and Fedora packages.",
-        versions=data["versions"],
+        versions=data["package_versions"],
         targets=data["rpm_targets"],
         arches=data["rpm_arches"],
     )

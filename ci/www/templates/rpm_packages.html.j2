@@ -36,11 +36,10 @@ function getLink() {
   const type = document.getElementById("type").value;
   const target = repoData.rpm_targets.find((item) => item.value === os);
   const server = window.location.host || new URL(repoData.rpm_repo_url).host;
-  const repoType = version === repoData.master_ver ? "devel" : type;
-  const packageName =
-    "opensips-repo-" + repoType + "-" + version + "-" + repoData.rpm_repo_package_release +
-    "." + target.pure + ".noarch.rpm";
-  const link = "https://" + server + "/" + version + "/" + repoType + "/" + target.value + "/" + arch + "/" + packageName;
+  const repoType = type;
+  const packagePath = version + "/" + repoType + "/" + target.value + "/" + arch + "/opensips-repo-" +
+    repoType + "-" + version + "-" + repoData.rpm_repo_package_release + "." + target.pure + ".noarch.rpm";
+  const link = "https://" + server + "/" + packagePath;
   const command = "dnf install " + link;
   document.getElementById("installCommand").textContent = command;
   document.getElementById("dlink").href = link;
@@ -51,13 +50,13 @@ function getLink() {
 }
 
 function init() {
-  if (repoData.rpm_targets.length === 0 || repoData.versions.length === 0) return;
+  if (repoData.rpm_targets.length === 0 || repoData.package_versions.length === 0) return;
   const osDefault = compactOs(repoData.rpm_targets[0].value);
   fillOsSelect(selectedFromQuery("os", osDefault));
 
   const verSelect = document.getElementById("ver");
-  const selectedVersion = selectedFromQuery("v", repoData.versions[0].value);
-  repoData.versions.forEach((item) => verSelect.appendChild(option(item.value, item.label, selectedVersion)));
+  const selectedVersion = selectedFromQuery("v", repoData.package_versions[0].value);
+  repoData.package_versions.forEach((item) => verSelect.appendChild(option(item.value, item.label, selectedVersion)));
   getLink();
 }
 
@@ -66,7 +65,7 @@ window.addEventListener("DOMContentLoaded", init);
 
 <h1>Repository RPMs</h1>
 
-{% if data.rpm_targets and data.versions %}
+{% if data.rpm_targets and data.package_versions %}
 <p class="lead">Select a target platform to get the matching OpenSIPS repository package.</p>
 
 <section id="package-selector">

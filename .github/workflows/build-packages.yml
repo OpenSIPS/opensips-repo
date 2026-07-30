@@ -13,16 +13,17 @@ on:
         default: all
         options:
           - all
+          - devel
           - nightly
           - release
           - cli
           - www
       tag:
-        description: 'OpenSIPS source tag for release mode, for example 3.6.5 or 3.6.0-beta. Leave empty for latest.'
+        description: 'OpenSIPS source tag for release mode, for example 3.6.5 or 4.0.0-rc1. Leave empty for latest.'
         type: string
         required: false
       build_what:
-        description: 'Space-separated OpenSIPS major versions, for example "4.0 3.6". Leave empty for all.'
+        description: 'Space-separated OpenSIPS builds, for example "devel 4.0 3.6". Leave empty for all.'
         type: string
         required: false
       build_for:
@@ -96,6 +97,10 @@ jobs:
         uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: Install website generator dependencies
+        run: |
+          python3 -c 'import importlib.util, sys; sys.exit(importlib.util.find_spec("jinja2") is None)' || python3 -m pip install --user -r ci/requirements.txt
 
       - name: Run OpenSIPS package build
         env:

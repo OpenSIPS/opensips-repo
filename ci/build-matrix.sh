@@ -47,10 +47,12 @@ record_matrix_skip() {
 
 resolve_opensips_matrix_entry() {
     local mode="$1" version="$2" tag="$3"
-    local repo real_ref git_release git_date last_tag last_tag_rpm resolved_tag
+    local repo real_ref git_release git_date git_release_version last_tag last_tag_rpm resolved_tag
 
     MATRIX_TYPE=""
+    MATRIX_MODE="$mode"
     MATRIX_TAG=""
+    MATRIX_VERSION="$version"
     MATRIX_PROD_DEB=""
     MATRIX_PROD_RPM=""
 
@@ -60,39 +62,53 @@ resolve_opensips_matrix_entry() {
             if [[ -n "$tag" ]]; then
                 resolved_tag="$tag"
             else
-                if [[ "$version" == "$MASTER_VER" ]]; then
-                    printf 'Skipping release / opensips / %s: MASTER_VER has no release packages\n' "$version" >&2
+                if is_devel_build "$version"; then
+                    printf 'Skipping release / opensips / devel: devel has no release packages\n' >&2
                     return 1
                 fi
-                real_ref="$version"
+                real_ref="master"
                 repo="$SOURCE_DIR/opensips-${version}.git"
                 prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$real_ref" "$repo" >&2
-                resolved_tag="$(latest_allowed_tag "$repo" "$version" || true)"
+                resolved_tag="$(latest_tag_for_version "$repo" "$version" || true)"
                 if [[ -z "$resolved_tag" ]]; then
-                    printf 'Skipping release / opensips / %s: no allowed tags found\n' "$version" >&2
+                    printf 'Skipping release / opensips / %s: no tags found\n' "$version" >&2
                     return 1
                 fi
             fi
             MATRIX_TAG="$resolved_tag"
-            MATRIX_PROD_DEB="$resolved_tag"
-            MATRIX_PROD_RPM="${resolved_tag//-/.}"
+            MATRIX_PROD_DEB="$(package_version_from_tag "$resolved_tag")"
+            MATRIX_PROD_RPM="$MATRIX_PROD_DEB"
             ;;
         nightly)
+            if is_devel_build "$version"; then
+                resolve_opensips_matrix_entry devel "$version" "$tag"
+                return $?
+            fi
             MATRIX_TYPE="nightly"
             real_ref="$version"
-            [[ "$version" == "$MASTER_VER" ]] && real_ref="master"
             repo="$SOURCE_DIR/opensips-${version}.git"
             prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$real_ref" "$repo" >&2
             git_release="$(git_short_sha "$repo")"
             git_date="$(git_commit_date "$repo")"
-            if [[ "$real_ref" == "master" ]]; then
-                last_tag="${version}.0-dev"
-            else
-                last_tag="$(git -C "$repo" tag -l "${version}.*" | sed 's/-.*$//' | sort -V | tail -n 1)"
-            fi
-            last_tag_rpm="${last_tag//-/.}"
+            last_tag="$(latest_tag_for_version "$repo" "$version" || true)"
+            [[ -n "$last_tag" ]] || last_tag="${version}.0"
+            last_tag="$(package_version_from_tag "$last_tag")"
+            last_tag_rpm="$last_tag"
             MATRIX_PROD_DEB="${last_tag}~${git_date}~${git_release}"
             MATRIX_PROD_RPM="${last_tag_rpm}.${git_date}.${git_release}"
+            ;;
+        devel)
+            MATRIX_TYPE="devel"
+            MATRIX_MODE="devel"
+            real_ref="master"
+            repo="$SOURCE_DIR/opensips-devel.git"
+            prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$real_ref" "$repo" >&2
+            git_release="$(git_short_sha "$repo")"
+            git_date="$(git_commit_date "$repo")"
+            git_release_version="$(opensips_makefile_version "$repo")"
+            MATRIX_VERSION="$(major_from_product_version "$git_release_version")"
+            MATRIX_PROD_DEB="${git_release_version}~${git_date}~${git_release}"
+            MATRIX_PROD_RPM="${git_release_version}.${git_date}.${git_release}"
             ;;
         *)
             fail "Unknown matrix mode: $mode"
@@ -128,8 +144,8 @@ resolve_aux_matrix_entry() {
             MATRIX_PROD_DEB="$resolved_tag"
             MATRIX_PROD_RPM="${resolved_tag//-/.}"
             ;;
-        nightly)
-            MATRIX_TYPE="nightly"
+        nightly|devel)
+            MATRIX_TYPE="$mode"
             prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo" >&2
             git_release="$(git_short_sha "$repo")"
             git_date="$(git_commit_date "$repo")"
@@ -153,8 +169,12 @@ case "$MODE" in
         MODES="$MODE"
         MATRIX_PROJECTS="opensips python cli"
         ;;
+    devel)
+        MODES="devel"
+        MATRIX_PROJECTS="opensips python cli"
+        ;;
     cli)
-        MODES="release nightly"
+        MODES="release nightly devel"
         MATRIX_PROJECTS="python cli"
         ;;
     *)
@@ -165,15 +185,15 @@ esac
 TAG_MAJOR=""
 if [[ -n "$TAG" && " $MODES " == *" release "* && " $MATRIX_PROJECTS " == *" opensips "* ]]; then
     TAG_MAJOR="$(version_from_tag "$TAG")" || fail "Cannot infer major version from tag: $TAG"
-    if ! is_tag_allowed_for_version "$TAG_MAJOR" "$TAG"; then
-        fail "Tag $TAG is not allowed for version $TAG_MAJOR by ALLOW_RC_BETA=$ALLOW_RC_BETA"
-    fi
 fi
 
 entries=()
 for mode in $MODES; do
     versions="$BUILD_WHAT"
     entry_tag=""
+    if [[ "$mode" == "devel" ]]; then
+        versions="devel"
+    fi
     if [[ "$mode" == "release" && -n "$TAG" && " $MATRIX_PROJECTS " == *" opensips "* ]]; then
         versions="$TAG_MAJOR"
         entry_tag="$TAG"
@@ -189,34 +209,34 @@ for mode in $MODES; do
             fi
             for target in $BUILD_FOR; do
                 package_path=""
-                if package_path="$(repo_package_path_for_target "$MATRIX_TYPE" opensips "$MATRIX_PROD_DEB" "$MATRIX_PROD_RPM" "$version" "$target" "$REL")"; then
+                if package_path="$(repo_package_path_for_target "$MATRIX_TYPE" opensips "$MATRIX_PROD_DEB" "$MATRIX_PROD_RPM" "$MATRIX_VERSION" "$target" "$REL")"; then
                     if [[ -f "$package_path" ]]; then
                         parse_distro "$target"
                         if is_rpm_distro "$DISTR_NAME"; then
-                            repo_package_path="$(rpm_repository_package_path "$MATRIX_TYPE" opensips "$version" "$target")"
+                            repo_package_path="$(rpm_repository_package_path "$MATRIX_TYPE" opensips "$MATRIX_VERSION" "$target")"
                             if [[ ! -f "$repo_package_path" ]]; then
                                 entries+=("$(jq -cn \
-                                    --arg mode "$mode" \
+                                    --arg mode "$MATRIX_MODE" \
                                     --arg project "opensips" \
-                                    --arg version "$version" \
+                                    --arg version "$MATRIX_VERSION" \
                                     --arg target "$target" \
                                     --arg tag "$MATRIX_TAG" \
-                                    --arg display "$mode / opensips / $version / $target" \
+                                    --arg display "$MATRIX_MODE / opensips / $MATRIX_VERSION / $target" \
                                     '{mode: $mode, project: $project, version: $version, target: $target, tag: $tag, display: $display}')")
                                 continue
                             fi
                         fi
-                        record_matrix_skip "$mode / opensips / $version / $target" "$MATRIX_TAG" "$package_path"
+                        record_matrix_skip "$MATRIX_MODE / opensips / $MATRIX_VERSION / $target" "$MATRIX_TAG" "$package_path"
                         continue
                     fi
                 fi
                 entries+=("$(jq -cn \
-                    --arg mode "$mode" \
+                    --arg mode "$MATRIX_MODE" \
                     --arg project "opensips" \
-                    --arg version "$version" \
+                    --arg version "$MATRIX_VERSION" \
                     --arg target "$target" \
                     --arg tag "$MATRIX_TAG" \
-                    --arg display "$mode / opensips / $version / $target" \
+                    --arg display "$MATRIX_MODE / opensips / $MATRIX_VERSION / $target" \
                     '{mode: $mode, project: $project, version: $version, target: $target, tag: $tag, display: $display}')")
             done
         done
@@ -227,11 +247,18 @@ for mode in $MODES; do
         if ! resolve_aux_matrix_entry "$mode" "$project"; then
             continue
         fi
+        aux_versions="$versions"
+        if [[ "$mode" == "release" ]]; then
+            aux_versions="$(without_devel_versions "$versions")"
+            [[ -n "$aux_versions" ]] || continue
+        elif [[ "$mode" == "devel" ]]; then
+            aux_versions="devel"
+        fi
         package_name="$(aux_project_package_name "$project")"
         for target in $BUILD_FOR; do
             parse_distro "$target"
             is_deb_distro "$DISTR_NAME" || continue
-            mapfile -t components < <(shared_deb_components "$MATRIX_TYPE" "$versions")
+            mapfile -t components < <(shared_deb_components "$MATRIX_TYPE" "$aux_versions")
             package_missing=0
             package_path=""
             for component in "${components[@]}"; do
@@ -246,7 +273,7 @@ for mode in $MODES; do
             entries+=("$(jq -cn \
                 --arg mode "$mode" \
                 --arg project "$project" \
-                --arg version "$versions" \
+                --arg version "$aux_versions" \
                 --arg target "$target" \
                 --arg tag "$MATRIX_TAG" \
                 --arg display "$mode / $project / $target" \

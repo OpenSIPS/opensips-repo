@@ -3,13 +3,13 @@
 <h1>{{ site_title }}</h1>
 <p class="lead">{{ description }}</p>
 
-<section id="releases">
-  <h2>OpenSIPS Releases</h2>
+<section id="versions">
+  <h2>OpenSIPS Versions</h2>
   <ul class="repo-list">
 {% for version in versions %}
     <li>
       <a class="item-title" href="/packages.html?v={{ version.value }}">{{ version.label }}</a>
-{% if version.is_master %}
+{% if version.is_devel %}
       <span class="item-note">development branch</span>
 {% endif %}
     </li>

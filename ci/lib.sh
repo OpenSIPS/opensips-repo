@@ -40,6 +40,14 @@ contains_word_in_string() {
     return 1
 }
 
+without_devel_versions() {
+    local item
+    for item in $*; do
+        is_devel_build "$item" && continue
+        printf '%s\n' "$item"
+    done | xargs
+}
+
 parse_distro() {
     local target="$1"
     DISTR_NAME="${target%%/*}"
@@ -61,9 +69,13 @@ is_rpm_distro() {
     [[ "$1" == el-* || "$1" == st-* || "$1" == fc-* ]]
 }
 
+is_devel_build() {
+    [[ "$1" == "devel" ]]
+}
+
 deb_component() {
     local type="$1" major="$2"
-    if [[ "$major" == "$MASTER_VER" ]]; then
+    if [[ "$type" == "devel" || "$major" == "devel" ]]; then
         printf 'devel\n'
     else
         printf '%s-%s\n' "$major" "$type"
@@ -79,7 +91,7 @@ shared_deb_components() {
 
 rpm_repo_dir_part() {
     local type="$1" major="$2"
-    if [[ "$major" == "$MASTER_VER" ]]; then
+    if [[ "$type" == "devel" || "$major" == "devel" ]]; then
         printf 'devel\n'
     else
         printf '%s/%s\n' "$major" "$type"
@@ -142,7 +154,7 @@ repo_package_path_for_target() {
 
 rpm_yum_type() {
     local type="$1" major="$2"
-    if [[ "$major" == "$MASTER_VER" ]]; then
+    if [[ "$type" == "devel" || "$major" == "devel" ]]; then
         printf 'devel\n'
     else
         printf '%s\n' "$type"
@@ -151,7 +163,7 @@ rpm_yum_type() {
 
 rpm_yum_name() {
     local type="$1" major="$2"
-    if [[ "$major" == "$MASTER_VER" ]]; then
+    if [[ "$type" == "devel" || "$major" == "devel" ]]; then
         printf 'devel-%s\n' "$major"
     else
         printf '%s-%s\n' "$type" "$major"
@@ -266,34 +278,51 @@ version_from_tag() {
     fi
 }
 
-is_rc_beta_allowed_for_version() {
-    local version="$1" v
-    for v in $ALLOW_RC_BETA; do
-        [[ "$v" == "$version" ]] && return 0
-    done
-    return 1
-}
-
-is_tag_allowed_for_version() {
-    local version="$1" tag="$2"
-    [[ "$tag" == "$version".* ]] || return 1
-    if is_rc_beta_allowed_for_version "$version"; then
-        return 0
-    fi
-    ! grep -Eq '[A-Za-z]' <<<"$tag"
-}
-
-latest_allowed_tag() {
-    local repo="$1" version="$2"
-    if is_rc_beta_allowed_for_version "$version"; then
-        git -C "$repo" tag -l "${version}.*" | sort -V | tail -n 1
+package_version_from_tag() {
+    local tag="$1"
+    if [[ "$tag" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-(.+)$ ]]; then
+        printf '%s~%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
     else
-        git -C "$repo" tag -l "${version}.*" | grep -vE '[A-Za-z]' | sort -V | tail -n 1
+        printf '%s\n' "$tag"
     fi
+}
+
+latest_tag_for_version() {
+    local repo="$1" version="$2"
+    git -C "$repo" tag -l "${version}.*" \
+        | while IFS= read -r tag; do
+            printf '%s\t%s\n' "$(package_version_from_tag "$tag")" "$tag"
+        done \
+        | sort -V -k1,1 \
+        | tail -n 1 \
+        | cut -f2
 }
 
 latest_tag() {
     git -C "$1" tag -l | sort -V | tail -n 1
+}
+
+opensips_makefile_version() {
+    local repo="$1" defs="$1/Makefile.defs" major="" minor="" subminor=""
+    [[ -f "$defs" ]] || fail "Missing Makefile.defs in $repo"
+    while IFS='=' read -r key value; do
+        key="${key//[[:space:]]/}"
+        value="${value//[[:space:]]/}"
+        case "$key" in
+            VERSION_MAJOR) major="$value" ;;
+            VERSION_MINOR) minor="$value" ;;
+            VERSION_SUBMINOR) subminor="$value" ;;
+        esac
+    done <"$defs"
+    [[ -n "$major" && -n "$minor" && -n "$subminor" ]] \
+        || fail "Cannot read VERSION_MAJOR/MINOR/SUBMINOR from $defs"
+    printf '%s.%s.%s\n' "$major" "$minor" "$subminor"
+}
+
+major_from_product_version() {
+    local version="$1" rest
+    rest="${version#*.}"
+    printf '%s.%s\n' "${version%%.*}" "${rest%%.*}"
 }
 
 aux_project_package_name() {
@@ -371,10 +400,12 @@ sign_rpms() {
     done
 }
 
-cleanup_nightly_files() {
+cleanup_expiring_files() {
     local root="$1"
     [[ -d "$root" ]] || return 0
-    find "$root" -type f -path '*nightly*' -name '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' -mtime +"$KEEP_DAYS" -delete || true
+    find "$root" -type f \( -path '*nightly*' -o -path '*devel*' \) \
+        -name '*[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]*' \
+        -mtime +"$KEEP_DAYS" -delete || true
 }
 
 archive_release_tarball() {
@@ -442,4 +473,24 @@ GPG_PASSPHRASE_FILE="$APT_GPG_PASSPHRASE_FILE"
 
 SYMLINKS="off"
 EOF
+}
+
+refresh_repository_website() {
+    local generator="$LIB_DIR/generate-www.py"
+
+    if [[ ! -f "$generator" ]]; then
+        warn "Repository website generator is missing: $generator"
+        return 0
+    fi
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "python3 is not installed; repository website indexes will not be refreshed"
+        return 0
+    fi
+    if ! python3 -c 'import jinja2' >/dev/null 2>&1; then
+        warn "Python module jinja2 is not installed; repository website indexes will not be refreshed"
+        return 0
+    fi
+
+    log "Refreshing repository website indexes"
+    python3 "$generator" || warn "Cannot refresh repository website indexes"
 }

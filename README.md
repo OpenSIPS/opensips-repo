@@ -9,9 +9,10 @@ static repository website and package indexes.
 
 Manual workflow modes:
 
-- `all` builds release, nightly, CLI/Python packages, indexes, and website.
+- `all` builds release, nightly, devel, CLI/Python packages, indexes, and website.
 - `release` builds release packages.
 - `nightly` builds nightly packages.
+- `devel` builds packages from the OpenSIPS development branch.
 - `cli` builds shared CLI/Python packages.
 - `www` regenerates only the static website.
 

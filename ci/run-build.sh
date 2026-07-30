@@ -280,7 +280,7 @@ run_rpm_build() {
         [[ -f "$repo_rpm_path" ]] || { warn "Repository RPM was not created: $repo_rpm_path"; STATUS=1; return 0; }
         sign_rpms "$repo_rpm_path"
         log "Repository RPM done: $repo_rpm_path"
-        cleanup_nightly_files "$RPM_DIR"
+        cleanup_expiring_files "$RPM_DIR"
         "$SCRIPT_DIR/reindex-rpm.sh" "$local_rpm_dir"
         "$SCRIPT_DIR/reindex-rpm.sh" "$local_srpm_dir"
         log "RPM build done: $project_name $prod_ver for $target"
@@ -295,7 +295,7 @@ build_opensips() {
     local repo="$SOURCE_DIR/opensips-${major}.git"
     prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$ref" "$repo"
 
-    if [[ "$type" == "releases" && "$major" != "$MASTER_VER" ]]; then
+    if [[ "$type" == "releases" ]]; then
         archive_release_tarball "$repo" opensips "$prod_rpm" "$(git_short_sha "$repo")"
     fi
 
@@ -314,57 +314,70 @@ build_opensips() {
 build_release_from_tag() {
     local tag="$1"
     [[ -n "$tag" ]] || fail "Release mode requires INPUT_TAG/tag"
-    local major tag_rpm repo
+    local major prod_ver repo
     major="$(version_from_tag "$tag")" || fail "Cannot infer major version from tag: $tag"
     if ! contains_word_in_string "$major" "$BUILD_WHAT"; then
         warn "Tag $tag belongs to $major, which is not in BUILD_WHAT=[$BUILD_WHAT]; building it anyway because explicit tag was requested"
     fi
     repo="$SOURCE_DIR/opensips-${major}.git"
     prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$tag" "$repo"
-    if ! is_tag_allowed_for_version "$major" "$tag"; then
-        fail "Tag $tag is not allowed for version $major by ALLOW_RC_BETA=$ALLOW_RC_BETA"
-    fi
-    tag_rpm="${tag//-/.}"
+    prod_ver="$(package_version_from_tag "$tag")"
     log ">>> opensips-$major release tag=$tag"
-    build_opensips releases "$tag" "$major" "$tag" "$tag_rpm"
+    build_opensips releases "$tag" "$major" "$prod_ver" "$prod_ver"
 }
 
 build_latest_release() {
-    local major="$BUILD_WHAT" repo tag tag_rpm real_ref
-    [[ "$major" == "$MASTER_VER" ]] && { warn "Skipping release build for MASTER_VER=$MASTER_VER"; return 0; }
-    real_ref="$major"
+    local major="$BUILD_WHAT" repo tag prod_ver real_ref
+    is_devel_build "$major" && { warn "Skipping release build for devel"; return 0; }
+    real_ref="master"
     repo="$SOURCE_DIR/opensips-${major}.git"
     prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$real_ref" "$repo"
-    tag="$(latest_allowed_tag "$repo" "$major" || true)"
-    [[ -n "$tag" ]] || { warn "No allowed tags found for $major"; return 0; }
-    tag_rpm="${tag//-/.}"
+    tag="$(latest_tag_for_version "$repo" "$major" || true)"
+    [[ -n "$tag" ]] || { warn "No tags found for $major"; return 0; }
+    prod_ver="$(package_version_from_tag "$tag")"
     log ">>> opensips-$major latest release tag=$tag"
-    build_opensips releases "$tag" "$major" "$tag" "$tag_rpm"
+    build_opensips releases "$tag" "$major" "$prod_ver" "$prod_ver"
 }
 
 build_opensips_nightly() {
     local major="$BUILD_WHAT" real_ref repo git_release git_date last_tag last_tag_rpm prod_deb prod_rpm
+    if is_devel_build "$major"; then
+        build_opensips_devel
+        return 0
+    fi
     log ">>> opensips-$major nightly"
     real_ref="$major"
-    [[ "$major" == "$MASTER_VER" ]] && real_ref="master"
     repo="$SOURCE_DIR/opensips-${major}.git"
     prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$real_ref" "$repo"
     git_release="$(git_short_sha "$repo")"
     git_date="$(git_commit_date "$repo")"
-    if [[ "$real_ref" == "master" ]]; then
-        last_tag="${major}.0-dev"
-    else
-        last_tag="$(git -C "$repo" tag -l "${major}.*" | sed 's/-.*$//' | sort -V | tail -n 1)"
-    fi
-    last_tag_rpm="${last_tag//-/.}"
+    last_tag="$(latest_tag_for_version "$repo" "$major" || true)"
+    [[ -n "$last_tag" ]] || last_tag="${major}.0"
+    last_tag="$(package_version_from_tag "$last_tag")"
+    last_tag_rpm="$last_tag"
     prod_deb="${last_tag}~${git_date}~${git_release}"
     prod_rpm="${last_tag_rpm}.${git_date}.${git_release}"
     build_opensips nightly "$real_ref" "$major" "$prod_deb" "$prod_rpm"
 }
 
+build_opensips_devel() {
+    local ref="master" repo git_release git_date base_ver major prod_deb prod_rpm
+    repo="$SOURCE_DIR/opensips-devel.git"
+    prepare_git_repo opensips "$OPENSIPS_SOURCE_URL" "$ref" "$repo"
+    git_release="$(git_short_sha "$repo")"
+    git_date="$(git_commit_date "$repo")"
+    base_ver="$(opensips_makefile_version "$repo")"
+    major="$(major_from_product_version "$base_ver")"
+    prod_deb="${base_ver}~${git_date}~${git_release}"
+    prod_rpm="${base_ver}.${git_date}.${git_release}"
+    log ">>> opensips-$major devel"
+    build_opensips devel "$ref" "$major" "$prod_deb" "$prod_rpm"
+}
+
 AUX_PACKAGE_DEB_PATH=""
 PYTHON_AUX_RELEASE_DEB_PATH=""
 PYTHON_AUX_NIGHTLY_DEB_PATH=""
+PYTHON_AUX_DEVEL_DEB_PATH=""
 
 build_aux_project() {
     local project_key="$1" type="$2" versions="$3" target="$4" extra_deb="${5:-}"
@@ -384,7 +397,7 @@ build_aux_project() {
             prepare_git_repo "$repo_name" "$source_url" "$tag" "$repo"
             prod_deb="$tag"
             ;;
-        nightly)
+        nightly|devel)
             prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo"
             git_release="$(git_short_sha "$repo")"
             git_date="$(git_commit_date "$repo")"
@@ -412,6 +425,11 @@ build_python_aux_nightly() {
     PYTHON_AUX_NIGHTLY_DEB_PATH="$AUX_PACKAGE_DEB_PATH"
 }
 
+build_python_aux_devel() {
+    build_aux_project python devel devel "$BUILD_FOR"
+    PYTHON_AUX_DEVEL_DEB_PATH="$AUX_PACKAGE_DEB_PATH"
+}
+
 build_cli_aux_release() {
     if [[ -z "$PYTHON_AUX_RELEASE_DEB_PATH" ]]; then
         build_python_aux_release
@@ -434,6 +452,18 @@ build_cli_aux_nightly() {
         return 0
     fi
     build_aux_project cli nightly "$BUILD_WHAT" "$BUILD_FOR" "$PYTHON_AUX_NIGHTLY_DEB_PATH"
+}
+
+build_cli_aux_devel() {
+    if [[ -z "$PYTHON_AUX_DEVEL_DEB_PATH" ]]; then
+        build_python_aux_devel
+    fi
+    if [[ ! -f "$PYTHON_AUX_DEVEL_DEB_PATH" ]]; then
+        warn "Cannot build opensips-cli devel without $PYTHON_AUX_DEVEL_DEB_PATH"
+        STATUS=1
+        return 0
+    fi
+    build_aux_project cli devel devel "$BUILD_FOR" "$PYTHON_AUX_DEVEL_DEB_PATH"
 }
 
 main() {
@@ -461,6 +491,11 @@ main() {
 #      is_build_project cli && build_python_like_nightly opensips-cli opensips-cli "$OPENSIPS_CLI_SOURCE_URL" master \
 #        "from opensipscli.version import __version__; print(__version__)"
             ;;
+        devel)
+            is_build_project opensips && build_opensips_devel
+            is_build_project python && build_python_aux_devel
+            is_build_project cli && build_cli_aux_devel
+            ;;
         all)
             if is_build_project opensips; then
                 if [[ -n "$TAG" ]]; then
@@ -484,6 +519,8 @@ main() {
             build_cli_aux_release
             build_python_aux_nightly
             build_cli_aux_nightly
+            build_python_aux_devel
+            build_cli_aux_devel
             ;;
         www)
             log "Website-only mode; package build skipped"
