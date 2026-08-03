@@ -179,9 +179,10 @@ docker_image_for_target() {
     fi
 
     case "$DISTR_ID-$DISTR_VER" in
-        el-10) printf 'rockylinux/rockylinux:10\n' ;;
         el-9) printf 'rockylinux/rockylinux:9\n' ;;
+        el-10) printf 'rockylinux/rockylinux:10\n' ;;
         st-9) printf 'quay.io/centos/centos:stream9\n' ;;
+        st-10) printf 'quay.io/centos/centos:stream10\n' ;;
         fc-*) printf 'fedora:%s\n' "$DISTR_VER" ;;
         *) fail "No Docker image mapping for target $target" ;;
     esac

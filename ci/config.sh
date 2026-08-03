@@ -15,7 +15,9 @@ DEFAULT_TARGETS=(
     ubuntu-noble/amd64
     ubuntu-jammy/amd64
     el-9/x86_64
+    el-10/x86_64
     st-9/x86_64
+    st-10/x86_64
 )
 
 BUILD_WHAT="${BUILD_WHAT:-${DEFAULT_VERSIONS[*]}}"
