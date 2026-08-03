@@ -98,6 +98,13 @@ rpm_repo_dir_part() {
     fi
 }
 
+shared_rpm_repo_parts() {
+    local type="$1" versions="$2" major
+    for major in $versions; do
+        rpm_repo_dir_part "$type" "$major"
+    done | sort -u
+}
+
 deb_repo_package_path() {
     local type="$1" project_name="$2" prod_ver="$3" major="$4" target="$5" rel="$6"
     local component real_arch
@@ -117,9 +124,15 @@ deb_repo_package_path_for_component() {
 
 rpm_repo_package_path() {
     local type="$1" project_name="$2" prod_ver="$3" major="$4" target="$5" rel="$6"
-    local repo_part local_rpm_dir real_arch
-    parse_distro "$target"
+    local repo_part
     repo_part="$(rpm_repo_dir_part "$type" "$major")"
+    rpm_repo_package_path_for_part "$repo_part" "$project_name" "$prod_ver" "$target" "$rel"
+}
+
+rpm_repo_package_path_for_part() {
+    local repo_part="$1" project_name="$2" prod_ver="$3" target="$4" rel="$5"
+    local local_rpm_dir real_arch
+    parse_distro "$target"
     local_rpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/$DISTR_ARCH"
     real_arch="$DISTR_ARCH"
     if [[ "$project_name" != "opensips" ]]; then
@@ -127,6 +140,14 @@ rpm_repo_package_path() {
     fi
     [[ "$real_arch" == "i386" ]] && real_arch="i686"
     printf '%s/%s-%s-%s.%s.%s.rpm\n' "$local_rpm_dir" "$project_name" "$prod_ver" "$rel" "$DISTR_NAME_PURE" "$real_arch"
+}
+
+first_shared_rpm_path() {
+    local type="$1" project_name="$2" prod_ver="$3" versions="$4" target="$5" rel="$6"
+    local repo_part
+    repo_part="$(shared_rpm_repo_parts "$type" "$versions" | head -n 1)"
+    [[ -n "$repo_part" ]] || return 1
+    rpm_repo_package_path_for_part "$repo_part" "$project_name" "$prod_ver" "$target" "$rel"
 }
 
 rpm_repository_package_path() {

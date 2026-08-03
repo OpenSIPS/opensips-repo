@@ -200,8 +200,13 @@ run_deb_build() {
 }
 
 run_rpm_build() {
-    local type="$1" project_name="$2" source_repo="$3" prod_ver="$4" major="$5" target="$6"
+    local type="$1" project_name="$2" source_repo="$3" prod_ver="$4" major_or_versions="$5" target="$6" extra_rpm="${7:-}"
     parse_distro "$target"
+
+    if ! is_rpm_distro "$DISTR_NAME"; then
+        warn "Skipping RPM build for non-RPM target: $target"
+        return 0
+    fi
 
     local build_arch="$DISTR_ARCH"
     local real_arch="$DISTR_ARCH"
@@ -211,27 +216,45 @@ run_rpm_build() {
     fi
     [[ "$real_arch" == "i386" ]] && real_arch="i686"
 
-    local repo_part local_rpm_dir local_srpm_dir main_rpm image safe_target staged out repo_rpm_path
-    repo_part="$(rpm_repo_dir_part "$type" "$major")"
-    local_rpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/$DISTR_ARCH"
-    local_srpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/SRPMS"
-    main_rpm="$(rpm_repo_package_path "$type" "$project_name" "$prod_ver" "$major" "$target" "$REL")"
-    repo_rpm_path="$(rpm_repository_package_path "$type" "$project_name" "$major" "$target")"
-    image="$(docker_image_for_target "$target")"
-    mkdir -p "$local_rpm_dir" "$local_srpm_dir"
+    local image safe_target staged out dep_mount_path package_path missing=0
+    local repo_part local_rpm_dir local_srpm_dir repo_rpm_path
+    local -a repo_parts rpm_files srpm_files docker_args
+    if [[ "$project_name" == "opensips" ]]; then
+        repo_parts=("$(rpm_repo_dir_part "$type" "$major_or_versions")")
+    else
+        mapfile -t repo_parts < <(shared_rpm_repo_parts "$type" "$major_or_versions")
+    fi
+    [[ "${#repo_parts[@]}" -gt 0 ]] || { warn "No RPM repositories selected for $project_name $prod_ver"; return 0; }
 
-    if [[ -f "$main_rpm" ]]; then
-        log "RPM already exists: $main_rpm"
-        if [[ ! -f "$repo_rpm_path" ]]; then
-            if ! build_repository_rpm "$type" "$project_name" "$major" "$target" "$image" "$local_rpm_dir"; then
-                STATUS=1
-                return 0
-            fi
-            [[ -f "$repo_rpm_path" ]] || { warn "Repository RPM was not created: $repo_rpm_path"; STATUS=1; return 0; }
-            sign_rpms "$repo_rpm_path"
-            "$SCRIPT_DIR/reindex-rpm.sh" "$local_rpm_dir"
+    for repo_part in "${repo_parts[@]}"; do
+        local_rpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/$DISTR_ARCH"
+        local_srpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/SRPMS"
+        mkdir -p "$local_rpm_dir" "$local_srpm_dir"
+        package_path="$(rpm_repo_package_path_for_part "$repo_part" "$project_name" "$prod_ver" "$target" "$REL")"
+        if [[ -f "$package_path" ]]; then
+            log "RPM already exists: $package_path"
         else
-            log "Repository RPM already exists: $repo_rpm_path"
+            missing=1
+        fi
+    done
+
+    image="$(docker_image_for_target "$target")"
+    if [[ "$missing" -eq 0 ]]; then
+        if [[ "$project_name" == "opensips" ]]; then
+            repo_part="${repo_parts[0]}"
+            local_rpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/$DISTR_ARCH"
+            repo_rpm_path="$(rpm_repository_package_path "$type" "$project_name" "$major_or_versions" "$target")"
+            if [[ ! -f "$repo_rpm_path" ]]; then
+                if ! build_repository_rpm "$type" "$project_name" "$major_or_versions" "$target" "$image" "$local_rpm_dir"; then
+                    STATUS=1
+                    return 0
+                fi
+                [[ -f "$repo_rpm_path" ]] || { warn "Repository RPM was not created: $repo_rpm_path"; STATUS=1; return 0; }
+                sign_rpms "$repo_rpm_path"
+                "$SCRIPT_DIR/reindex-rpm.sh" "$local_rpm_dir"
+            else
+                log "Repository RPM already exists: $repo_rpm_path"
+            fi
         fi
         return 0
     fi
@@ -245,44 +268,68 @@ run_rpm_build() {
     stage_source_tree "$source_repo" "$(git_short_sha "$source_repo")" "$staged"
 
     log "Build RPM $project_name $prod_ver for $target using $image"
-    if ${NICE_CMD} docker run ${DOCKER_RUN_OPTS} \
-        -e PROJECT="$project_name" \
-        -e PROD_VER="$prod_ver" \
-        -e REL="$REL" \
-        -e MAJOR="$major" \
-        -e DISTR_ID="$DISTR_ID" \
-        -e DISTR_VER="$DISTR_VER" \
-        -e DISTR_NAME="$DISTR_NAME" \
-        -e DISTR_NAME_PURE="$DISTR_NAME_PURE" \
-        -e DISTR_ARCH="$build_arch" \
-        -e REAL_ARCH="$real_arch" \
-        -e HOST_UID="$HOST_UID" \
-        -e HOST_GID="$HOST_GID" \
-        -v "$staged:/src:ro" \
-        -v "$SCRIPT_DIR:/ci:ro" \
-        -v "$out:/out" \
-        "$image" bash /ci/build-rpm.sh
+    docker_args=(
+        --rm
+        --network host
+        -e PROJECT="$project_name"
+        -e PROD_VER="$prod_ver"
+        -e REL="$REL"
+        -e MAJOR="$major_or_versions"
+        -e DISTR_ID="$DISTR_ID"
+        -e DISTR_VER="$DISTR_VER"
+        -e DISTR_NAME="$DISTR_NAME"
+        -e DISTR_NAME_PURE="$DISTR_NAME_PURE"
+        -e DISTR_ARCH="$build_arch"
+        -e REAL_ARCH="$real_arch"
+        -e HOST_UID="$HOST_UID"
+        -e HOST_GID="$HOST_GID"
+        -v "$staged:/src:ro"
+        -v "$SCRIPT_DIR:/ci:ro"
+        -v "$out:/out"
+    )
+    if [[ -n "$extra_rpm" ]]; then
+        dep_mount_path="/deps/${extra_rpm##*/}"
+        docker_args+=(
+            -e RPM_EXTRA_LOCAL_RPMS="$dep_mount_path"
+            -v "$extra_rpm:$dep_mount_path:ro"
+        )
+    fi
+
+    if ${NICE_CMD} docker run "${docker_args[@]}" "$image" bash /ci/build-rpm.sh
     then
         mapfile -t rpm_files < <(find "$out/RPMS" -type f -name '*.rpm' ! -name '*.src.rpm' | sort || true)
         mapfile -t srpm_files < <(find "$out/SRPMS" -type f -name '*.src.rpm' | sort || true)
-        sign_rpms "${rpm_files[@]}" "${srpm_files[@]}"
-        for rpm_file in "${rpm_files[@]}"; do
-            cp -f "$rpm_file" "$local_rpm_dir/"
-        done
-        for srpm_file in "${srpm_files[@]}"; do
-            cp -f "$srpm_file" "$local_srpm_dir/${project_name}-${prod_ver}.src.rpm"
-        done
-
-        if ! build_repository_rpm "$type" "$project_name" "$major" "$target" "$image" "$local_rpm_dir"; then
+        if [[ "${#rpm_files[@]}" -eq 0 ]]; then
+            warn "RPM build produced no .rpm files for $project_name $prod_ver $target"
             STATUS=1
             return 0
         fi
-        [[ -f "$repo_rpm_path" ]] || { warn "Repository RPM was not created: $repo_rpm_path"; STATUS=1; return 0; }
-        sign_rpms "$repo_rpm_path"
-        log "Repository RPM done: $repo_rpm_path"
+        sign_rpms "${rpm_files[@]}" "${srpm_files[@]}"
+        for repo_part in "${repo_parts[@]}"; do
+            local_rpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/$DISTR_ARCH"
+            local_srpm_dir="$RPM_DIR/$repo_part/$DISTR_ID/$DISTR_VER/SRPMS"
+            mkdir -p "$local_rpm_dir" "$local_srpm_dir"
+            for rpm_file in "${rpm_files[@]}"; do
+                cp -f "$rpm_file" "$local_rpm_dir/"
+            done
+            for srpm_file in "${srpm_files[@]}"; do
+                cp -f "$srpm_file" "$local_srpm_dir/${project_name}-${prod_ver}.src.rpm"
+            done
+
+            if [[ "$project_name" == "opensips" ]]; then
+                if ! build_repository_rpm "$type" "$project_name" "$major_or_versions" "$target" "$image" "$local_rpm_dir"; then
+                    STATUS=1
+                    return 0
+                fi
+                repo_rpm_path="$(rpm_repository_package_path "$type" "$project_name" "$major_or_versions" "$target")"
+                [[ -f "$repo_rpm_path" ]] || { warn "Repository RPM was not created: $repo_rpm_path"; STATUS=1; return 0; }
+                sign_rpms "$repo_rpm_path"
+                log "Repository RPM done: $repo_rpm_path"
+            fi
+            "$SCRIPT_DIR/reindex-rpm.sh" "$local_rpm_dir"
+            "$SCRIPT_DIR/reindex-rpm.sh" "$local_srpm_dir"
+        done
         cleanup_expiring_files "$RPM_DIR"
-        "$SCRIPT_DIR/reindex-rpm.sh" "$local_rpm_dir"
-        "$SCRIPT_DIR/reindex-rpm.sh" "$local_srpm_dir"
         log "RPM build done: $project_name $prod_ver for $target"
     else
         warn "Cannot build RPM $project_name $prod_ver for $target"
@@ -375,13 +422,17 @@ build_opensips_devel() {
 }
 
 AUX_PACKAGE_DEB_PATH=""
+AUX_PACKAGE_RPM_PATH=""
 PYTHON_AUX_RELEASE_DEB_PATH=""
+PYTHON_AUX_RELEASE_RPM_PATH=""
 PYTHON_AUX_NIGHTLY_DEB_PATH=""
+PYTHON_AUX_NIGHTLY_RPM_PATH=""
 PYTHON_AUX_DEVEL_DEB_PATH=""
+PYTHON_AUX_DEVEL_RPM_PATH=""
 
 build_aux_project() {
-    local project_key="$1" type="$2" versions="$3" target="$4" extra_deb="${5:-}"
-    local package_name repo_name source_url default_ref repo git_release git_date tag prod_deb
+    local project_key="$1" type="$2" versions="$3" target="$4" extra_deb="${5:-}" extra_rpm="${6:-}"
+    local package_name repo_name source_url default_ref repo git_release git_date tag prod_deb prod_rpm
 
     package_name="$(aux_project_package_name "$project_key")" || fail "Unknown auxiliary project: $project_key"
     repo_name="$(aux_project_repo_name "$project_key")"
@@ -396,6 +447,7 @@ build_aux_project() {
             [[ -n "$tag" ]] || { warn "No tags found for $package_name"; return 0; }
             prepare_git_repo "$repo_name" "$source_url" "$tag" "$repo"
             prod_deb="$tag"
+            prod_rpm="${tag//-/.}"
             ;;
         nightly|devel)
             prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo"
@@ -404,6 +456,7 @@ build_aux_project() {
             tag="$(latest_tag "$repo")"
             [[ -n "$tag" ]] || tag="0.0.0"
             prod_deb="${tag}~${git_date}~${git_release}"
+            prod_rpm="${tag//-/.}.${git_date}.${git_release}"
             ;;
         *)
             fail "Unknown auxiliary build type: $type"
@@ -411,59 +464,88 @@ build_aux_project() {
     esac
 
     log ">>> $package_name $type"
-    run_deb_build "$type" "$package_name" "$repo" "$prod_deb" "$versions" "$target" "$extra_deb"
-    AUX_PACKAGE_DEB_PATH="$(first_shared_deb_path "$type" "$package_name" "$prod_deb" "$versions" "$target")"
+    AUX_PACKAGE_DEB_PATH=""
+    AUX_PACKAGE_RPM_PATH=""
+    parse_distro "$target"
+    if is_deb_distro "$DISTR_NAME"; then
+        run_deb_build "$type" "$package_name" "$repo" "$prod_deb" "$versions" "$target" "$extra_deb"
+        AUX_PACKAGE_DEB_PATH="$(first_shared_deb_path "$type" "$package_name" "$prod_deb" "$versions" "$target")"
+    elif is_rpm_distro "$DISTR_NAME"; then
+        run_rpm_build "$type" "$package_name" "$repo" "$prod_rpm" "$versions" "$target" "$extra_rpm"
+        AUX_PACKAGE_RPM_PATH="$(first_shared_rpm_path "$type" "$package_name" "$prod_rpm" "$versions" "$target" "$REL")"
+    else
+        warn "Unknown target family: $target"
+    fi
 }
 
 build_python_aux_release() {
     build_aux_project python releases "$BUILD_WHAT" "$BUILD_FOR"
     PYTHON_AUX_RELEASE_DEB_PATH="$AUX_PACKAGE_DEB_PATH"
+    PYTHON_AUX_RELEASE_RPM_PATH="$AUX_PACKAGE_RPM_PATH"
 }
 
 build_python_aux_nightly() {
     build_aux_project python nightly "$BUILD_WHAT" "$BUILD_FOR"
     PYTHON_AUX_NIGHTLY_DEB_PATH="$AUX_PACKAGE_DEB_PATH"
+    PYTHON_AUX_NIGHTLY_RPM_PATH="$AUX_PACKAGE_RPM_PATH"
 }
 
 build_python_aux_devel() {
     build_aux_project python devel devel "$BUILD_FOR"
     PYTHON_AUX_DEVEL_DEB_PATH="$AUX_PACKAGE_DEB_PATH"
+    PYTHON_AUX_DEVEL_RPM_PATH="$AUX_PACKAGE_RPM_PATH"
+}
+
+build_cli_aux_project() {
+    local type="$1" versions="$2" label="$3" python_build_func="$4" deb_var="$5" rpm_var="$6"
+    local extra_deb="" extra_rpm="" dep_path=""
+
+    parse_distro "$BUILD_FOR"
+    if is_deb_distro "$DISTR_NAME"; then
+        dep_path="${!deb_var}"
+        if [[ -z "$dep_path" ]]; then
+            "$python_build_func"
+            dep_path="${!deb_var}"
+        fi
+        if [[ ! -f "$dep_path" ]]; then
+            warn "Cannot build opensips-cli $label without $dep_path"
+            STATUS=1
+            return 0
+        fi
+        extra_deb="$dep_path"
+    elif is_rpm_distro "$DISTR_NAME"; then
+        dep_path="${!rpm_var}"
+        if [[ -z "$dep_path" ]]; then
+            "$python_build_func"
+            dep_path="${!rpm_var}"
+        fi
+        if [[ ! -f "$dep_path" ]]; then
+            warn "Cannot build opensips-cli $label without $dep_path"
+            STATUS=1
+            return 0
+        fi
+        extra_rpm="$dep_path"
+    else
+        warn "Unknown target family: $BUILD_FOR"
+        return 0
+    fi
+
+    build_aux_project cli "$type" "$versions" "$BUILD_FOR" "$extra_deb" "$extra_rpm"
 }
 
 build_cli_aux_release() {
-    if [[ -z "$PYTHON_AUX_RELEASE_DEB_PATH" ]]; then
-        build_python_aux_release
-    fi
-    if [[ ! -f "$PYTHON_AUX_RELEASE_DEB_PATH" ]]; then
-        warn "Cannot build opensips-cli release without $PYTHON_AUX_RELEASE_DEB_PATH"
-        STATUS=1
-        return 0
-    fi
-    build_aux_project cli releases "$BUILD_WHAT" "$BUILD_FOR" "$PYTHON_AUX_RELEASE_DEB_PATH"
+    build_cli_aux_project releases "$BUILD_WHAT" release build_python_aux_release \
+        PYTHON_AUX_RELEASE_DEB_PATH PYTHON_AUX_RELEASE_RPM_PATH
 }
 
 build_cli_aux_nightly() {
-    if [[ -z "$PYTHON_AUX_NIGHTLY_DEB_PATH" ]]; then
-        build_python_aux_nightly
-    fi
-    if [[ ! -f "$PYTHON_AUX_NIGHTLY_DEB_PATH" ]]; then
-        warn "Cannot build opensips-cli nightly without $PYTHON_AUX_NIGHTLY_DEB_PATH"
-        STATUS=1
-        return 0
-    fi
-    build_aux_project cli nightly "$BUILD_WHAT" "$BUILD_FOR" "$PYTHON_AUX_NIGHTLY_DEB_PATH"
+    build_cli_aux_project nightly "$BUILD_WHAT" nightly build_python_aux_nightly \
+        PYTHON_AUX_NIGHTLY_DEB_PATH PYTHON_AUX_NIGHTLY_RPM_PATH
 }
 
 build_cli_aux_devel() {
-    if [[ -z "$PYTHON_AUX_DEVEL_DEB_PATH" ]]; then
-        build_python_aux_devel
-    fi
-    if [[ ! -f "$PYTHON_AUX_DEVEL_DEB_PATH" ]]; then
-        warn "Cannot build opensips-cli devel without $PYTHON_AUX_DEVEL_DEB_PATH"
-        STATUS=1
-        return 0
-    fi
-    build_aux_project cli devel devel "$BUILD_FOR" "$PYTHON_AUX_DEVEL_DEB_PATH"
+    build_cli_aux_project devel devel devel build_python_aux_devel \
+        PYTHON_AUX_DEVEL_DEB_PATH PYTHON_AUX_DEVEL_RPM_PATH
 }
 
 main() {

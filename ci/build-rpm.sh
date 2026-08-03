@@ -21,6 +21,7 @@ set -o pipefail
 : "${REAL_ARCH:?REAL_ARCH is required}"
 : "${HOST_UID:=}"
 : "${HOST_GID:=}"
+: "${RPM_EXTRA_LOCAL_RPMS:=}"
 
 restore_output_owner() {
     if [[ "$HOST_UID" =~ ^[0-9]+$ && "$HOST_GID" =~ ^[0-9]+$ && -d /out ]]; then
@@ -57,7 +58,7 @@ run_repo_hooks() {
 }
 
 prepare_spec() {
-    local spec_source=""
+    local spec_source="" spec="/root/rpmbuild/SPECS/${PROJECT}.spec"
     if [[ -f "/src/packaging/redhat_fedora/${PROJECT}.spec" ]]; then
         spec_source="/src/packaging/redhat_fedora/${PROJECT}.spec"
     elif [[ -f "/src/packaging/fedora/${PROJECT}.spec" ]]; then
@@ -69,13 +70,23 @@ prepare_spec() {
         exit 1
     fi
 
-    cp -f "$spec_source" "/root/rpmbuild/SPECS/${PROJECT}.spec"
-    sed -i "s/^Version:.*/Version:  ${PROD_VER}/" "/root/rpmbuild/SPECS/${PROJECT}.spec"
-    sed -i "s/^Release:.*/Release:  ${REL}%{?dist}/" "/root/rpmbuild/SPECS/${PROJECT}.spec"
+    cp -f "$spec_source" "$spec"
+    sed -i "s/^Version:.*/Version:  ${PROD_VER}/" "$spec"
+    sed -i "s/^Release:.*/Release:  ${REL}%{?dist}/" "$spec"
+    # Fallback for el/st <10
+    if [[ "$(rpm --eval '%{bash_completions_dir}')" == "%{bash_completions_dir}" ]] \
+        && ! grep -Eq '^[[:space:]]*%(global|define)[[:space:]]+bash_completions_dir\b' "$spec"; then
+        sed -i '1i%global bash_completions_dir %{_datadir}/bash-completion/completions' "$spec"
+    fi
 }
 
 install_build_deps() {
     local spec="/root/rpmbuild/SPECS/${PROJECT}.spec"
+    local local_rpms=()
+    if [[ -n "$RPM_EXTRA_LOCAL_RPMS" ]]; then
+        read -r -a local_rpms <<<"$RPM_EXTRA_LOCAL_RPMS"
+        dnf -y install --nogpgcheck "${local_rpms[@]}"
+    fi
     dnf -y builddep "$spec"
 }
 
