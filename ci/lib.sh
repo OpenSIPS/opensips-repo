@@ -387,39 +387,42 @@ stage_source_tree() {
     printf '%s\n' "$git_release" >"$dest/.gitrevision"
 }
 
-sign_rpms() {
-    local rpm_file
-    if [[ "$#" -eq 0 ]]; then
-        return 0
-    fi
+rpm_sign_files() {
+    local operation="$1" rpm_file
+    shift
+
+    [[ "$#" -gt 0 ]] || return 0
+    require_cmd gpg
     if ! command -v rpmsign >/dev/null 2>&1 && ! command -v rpm >/dev/null 2>&1; then
-        warn "rpmsign/rpm is not installed on host; RPM files will not be signed"
-        return 0
+        err "rpmsign/rpm is not installed on host"
+        return 1
     fi
-    if ! gpg --homedir "$GNUPGHOME" --list-secret-keys "$GPG_KEY_NAME" >/dev/null 2>&1; then
-        if [[ -n "${APT_GPG_PRIVATE_KEY:-}" ]]; then
-            setup_apt_signing_key
-        fi
-    fi
-    if ! gpg --homedir "$GNUPGHOME" --list-secret-keys "$GPG_KEY_NAME" >/dev/null 2>&1; then
-        warn "GPG secret key not found in $GNUPGHOME for $GPG_KEY_NAME; RPM files will not be signed"
-        return 0
-    fi
+
+    setup_apt_signing_key
+
     for rpm_file in "$@"; do
         [[ -f "$rpm_file" ]] || continue
-        log "Signing RPM $(basename "$rpm_file")"
+        log "${operation#--} RPM $(basename "$rpm_file")"
         if command -v rpmsign >/dev/null 2>&1; then
-            GNUPGHOME="$GNUPGHOME" rpmsign --addsign \
+            if ! GNUPGHOME="$GNUPGHOME" rpmsign "$operation" \
                 --define "_gpg_name ${GPG_KEY_NAME}" \
                 --define "_gpg_path ${GNUPGHOME}" \
-                "$rpm_file" || warn "Cannot sign $rpm_file"
-        else
-            GNUPGHOME="$GNUPGHOME" rpm \
-                -D "%_gpg_name ${GPG_KEY_NAME}" \
-                -D "%_gpg_path ${GNUPGHOME}" \
-                --resign "$rpm_file" || warn "Cannot sign $rpm_file"
+                "$rpm_file"; then
+                err "Cannot ${operation#--} RPM $rpm_file"
+                return 1
+            fi
+        elif ! GNUPGHOME="$GNUPGHOME" rpm \
+            -D "%_gpg_name ${GPG_KEY_NAME}" \
+            -D "%_gpg_path ${GNUPGHOME}" \
+            "$operation" "$rpm_file"; then
+            err "Cannot ${operation#--} RPM $rpm_file"
+            return 1
         fi
     done
+}
+
+sign_rpms() {
+    rpm_sign_files --addsign "$@" || fail "RPM signing failed"
 }
 
 cleanup_expiring_files() {
@@ -526,7 +529,7 @@ setup_apt_signing_key() {
     export GNUPGHOME
 
     if ! gpg --batch --homedir "$GNUPGHOME" --list-secret-keys "$GPG_KEY_NAME" >/dev/null 2>&1; then
-        log "Importing APT signing key into $GNUPGHOME"
+        log "Importing repository signing key into $GNUPGHOME"
         printf '%s\n' "$APT_GPG_PRIVATE_KEY" | gpg --batch --quiet --homedir "$GNUPGHOME" --import
     fi
 
@@ -538,8 +541,19 @@ setup_apt_signing_key() {
     umask "$old_umask"
     export APT_GPG_PASSPHRASE_FILE
 
+    # GPG 2.x requires loopback pinentry in order to consume a passphrase in
+    # an unattended signing job. The file and this per-job configuration are
+    # removed by the workflow cleanup step.
+    {
+        printf '%s\n' 'batch'
+        printf '%s\n' 'no-tty'
+        printf '%s\n' 'pinentry-mode loopback'
+        printf 'passphrase-file %s\n' "$APT_GPG_PASSPHRASE_FILE"
+    } >"$GNUPGHOME/gpg.conf"
+    chmod 600 "$GNUPGHOME/gpg.conf"
+
     gpg --batch --homedir "$GNUPGHOME" --list-secret-keys "$GPG_KEY_NAME" >/dev/null 2>&1 \
-        || fail "APT signing key '$GPG_KEY_NAME' is not available in GNUPGHOME=$GNUPGHOME"
+        || fail "Repository signing key '$GPG_KEY_NAME' is not available in GNUPGHOME=$GNUPGHOME"
 }
 
 make_freight_conf() {
