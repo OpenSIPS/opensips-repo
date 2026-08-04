@@ -42,18 +42,10 @@ install_build_tools() {
             fi
         fi
         dnf -y install epel-release || true
-        dnf -y install rpm-build rpm-sign redhat-rpm-config make gcc gcc-c++ git tar gzip sed patch m4 which findutils python3 python3-setuptools ca-certificates perl-devel perl-generators
+        dnf -y install rpm-build rpm-sign redhat-rpm-config make gcc gcc-c++ git tar gzip sed m4 which findutils python3 python3-setuptools ca-certificates perl-devel perl-generators
     else
         echo "DNF not found" >&2
         exit 1
-    fi
-}
-
-run_repo_hooks() {
-    if [[ -d /ci/hooks/rpm-before-build.d ]]; then
-        while IFS= read -r -d '' hook; do
-            "$hook"
-        done < <(find /ci/hooks/rpm-before-build.d -maxdepth 1 -type f -perm -0100 -print0 | sort -z)
     fi
 }
 
@@ -73,6 +65,7 @@ prepare_spec() {
     cp -f "$spec_source" "$spec"
     sed -i "s/^Version:.*/Version:  ${PROD_VER}/" "$spec"
     sed -i "s/^Release:.*/Release:  ${REL}%{?dist}/" "$spec"
+
     # Fallback for el/st <10
     if [[ "$(rpm --eval '%{bash_completions_dir}')" == "%{bash_completions_dir}" ]] \
         && ! grep -Eq '^[[:space:]]*%(global|define)[[:space:]]+bash_completions_dir\b' "$spec"; then
@@ -99,7 +92,6 @@ build_package() {
     tar --exclude="${src_name}/.git" -czf "$top/SOURCES/${src_name}.tar.gz" -C /tmp "$src_name"
 
     prepare_spec
-    run_repo_hooks
     install_build_deps
 
     local macro_rhel="0"
