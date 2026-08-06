@@ -95,8 +95,8 @@ jobs:
       group: package-build-${{ matrix.project }}-${{ matrix.version }}-${{ matrix.target }}
       cancel-in-progress: true
     runs-on: [repo]
-    # A protected environment must contain the signing secrets. Configure
-    # signing to allow only main and require reviewer approval.
+    # A protected environment must contain the signing and dependent-build
+    # secrets. Configure it to allow only main and require reviewer approval.
     environment: signing
     timeout-minutes: 1440
     strategy:
@@ -125,6 +125,14 @@ jobs:
         run: |
           # cd /opt/build/opensips
           ci/run-build.sh
+
+      - name: Trigger dependent Docker and SIPssert builds
+        if: ${{ matrix.project == 'opensips' && matrix.target == 'debian-bullseye/amd64' }}
+        env:
+          BUILD_MODE: ${{ matrix.mode }}
+          OPENSIPS_VERSION: ${{ matrix.version }}
+          DEPENDENT_BUILDS_GITHUB_TOKEN: ${{ secrets.DEPENDENT_BUILDS_GITHUB_TOKEN }}
+        run: ci/trigger-dependent-workflows.sh "$BUILD_MODE" "$OPENSIPS_VERSION"
 
       - name: Cleanup
         if: always()
