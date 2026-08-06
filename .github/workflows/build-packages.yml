@@ -31,6 +31,14 @@ on:
         type: string
         required: false
 
+# This workflow intentionally has no push or pull_request trigger. Keep this
+# allow-list on every job as a second line of defence if a trigger is added in
+# the future: public pull requests must never reach the persistent [repo]
+# self-hosted runner.
+concurrency:
+  group: package-build
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
@@ -41,6 +49,7 @@ defaults:
 jobs:
   prepare:
     name: Prepare build matrix
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
     # The runner is registered with --no-default-labels, so a generic
     # runs-on: self-hosted job cannot grab it.
     runs-on: [repo]
@@ -49,7 +58,7 @@ jobs:
       count: ${{ steps.matrix.outputs.count }}
     steps:
       - name: Checkout opensips-repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
 
@@ -85,8 +94,11 @@ jobs:
   build:
     name: ${{ matrix.display }}
     needs: prepare
-    if: ${{ needs.prepare.outputs.count != '0' }}
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.count != '0' }}
     runs-on: [repo]
+    # A protected environment must contain the signing secrets. Configure
+    # signing to allow only main and require reviewer approval.
+    environment: signing
     timeout-minutes: 1440
     strategy:
       fail-fast: false
@@ -94,7 +106,7 @@ jobs:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout opensips-repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
 
@@ -125,11 +137,11 @@ jobs:
   website:
     name: Generate repository website
     needs: [prepare, build]
-    if: ${{ always() && needs.prepare.result == 'success' && needs.build.result != 'cancelled' }}
+    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.result == 'success' && needs.build.result != 'cancelled' }}
     runs-on: [repo]
     steps:
       - name: Checkout opensips-repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
           fetch-depth: 0
 

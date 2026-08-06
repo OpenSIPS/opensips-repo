@@ -1,0 +1,4 @@
+# These owners should be required reviewers in the main branch ruleset.
+*                    @OpenSIPS/repo
+/.github/workflows/ @OpenSIPS/repo
+/.github/CODEOWNERS   @OpenSIPS/repo
