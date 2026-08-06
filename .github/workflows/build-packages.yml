@@ -35,10 +35,6 @@ on:
 # allow-list on every job as a second line of defence if a trigger is added in
 # the future: public pull requests must never reach the persistent [repo]
 # self-hosted runner.
-concurrency:
-  group: package-build
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -95,6 +91,9 @@ jobs:
     name: ${{ matrix.display }}
     needs: prepare
     if: ${{ github.repository == 'OpenSIPS/opensips-repo' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.count != '0' }}
+    concurrency:
+      group: package-build-${{ matrix.project }}-${{ matrix.version }}-${{ matrix.target }}
+      cancel-in-progress: true
     runs-on: [repo]
     # A protected environment must contain the signing secrets. Configure
     # signing to allow only main and require reviewer approval.
