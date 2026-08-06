@@ -49,7 +49,7 @@ defaults:
 jobs:
   prepare:
     name: Prepare build matrix
-    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.repository == 'OpenSIPS/opensips-repo' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') }}
     # The runner is registered with --no-default-labels, so a generic
     # runs-on: self-hosted job cannot grab it.
     runs-on: [repo]
@@ -94,7 +94,7 @@ jobs:
   build:
     name: ${{ matrix.display }}
     needs: prepare
-    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.count != '0' }}
+    if: ${{ github.repository == 'OpenSIPS/opensips-repo' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.count != '0' }}
     runs-on: [repo]
     # A protected environment must contain the signing secrets. Configure
     # signing to allow only main and require reviewer approval.
@@ -137,7 +137,7 @@ jobs:
   website:
     name: Generate repository website
     needs: [prepare, build]
-    if: ${{ always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.result == 'success' && needs.build.result != 'cancelled' }}
+    if: ${{ always() && github.repository == 'OpenSIPS/opensips-repo' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.result == 'success' && needs.build.result != 'cancelled' }}
     runs-on: [repo]
     steps:
       - name: Checkout opensips-repo
