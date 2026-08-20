@@ -92,7 +92,7 @@ jobs:
     needs: prepare
     if: ${{ github.repository == 'OpenSIPS/opensips-repo' && github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && needs.prepare.outputs.count != '0' }}
     concurrency:
-      group: package-build-${{ matrix.project }}-${{ matrix.version }}-${{ matrix.target }}
+      group: package-build-${{ matrix.mode }}-${{ matrix.project }}-${{ matrix.version }}-${{ matrix.target }}
       cancel-in-progress: true
     runs-on: [repo]
     # A protected environment must contain the signing and dependent-build
@@ -101,7 +101,6 @@ jobs:
     timeout-minutes: 1440
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout opensips-repo
