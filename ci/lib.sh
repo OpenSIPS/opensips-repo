@@ -560,6 +560,7 @@ make_freight_conf() {
     cat >"$FREIGHT_CONF" <<EOF
 VARLIB="$FREIGHT_LIB"
 VARCACHE="$DEB_DIR"
+ARCHS="i386 amd64 all"
 
 ORIGIN="OpenSIPS - Open Source SIP proxy/server"
 LABEL="OpenSIPS - Open Source SIP proxy/server"
