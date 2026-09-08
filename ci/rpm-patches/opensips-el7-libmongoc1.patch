@@ -1,0 +1,28 @@
+Temporary EL7 compatibility for OpenSIPS releases and nightly builds.
+Remove once libmongoc 1.x compatibility is fixed upstream.
+
+diff --git a/modules/cachedb_mongodb/Makefile b/modules/cachedb_mongodb/Makefile
+index e361505a3..cd1aafc0b 100644
+--- a/modules/cachedb_mongodb/Makefile
++++ b/modules/cachedb_mongodb/Makefile
+@@ -13,3 +13 @@ MONGOC_BUILDER := $(shell \
+-	if pkg-config --exists mongoc2; then \
+-		echo 'pkg-config mongoc2'; \
+-	elif pkg-config --exists libmongoc-1.0; then \
++	if pkg-config --exists libmongoc-1.0; then \
+diff --git a/modules/cachedb_mongodb/cachedb_mongodb_dbase.h b/modules/cachedb_mongodb/cachedb_mongodb_dbase.h
+index 0eaf76667..cbe485556 100644
+--- a/modules/cachedb_mongodb/cachedb_mongodb_dbase.h
++++ b/modules/cachedb_mongodb/cachedb_mongodb_dbase.h
+@@ -30,2 +30,2 @@
+-#include <mongoc/mongoc.h>
+-#include <bson/bson.h>
++#include <mongoc.h>
++#include <bson.h>
+diff --git a/modules/cachedb_mongodb/cachedb_mongodb_json.h b/modules/cachedb_mongodb/cachedb_mongodb_json.h
+index 85bbbab8d..f3bcbd9bb 100644
+--- a/modules/cachedb_mongodb/cachedb_mongodb_json.h
++++ b/modules/cachedb_mongodb/cachedb_mongodb_json.h
+@@ -26 +26 @@
+-#include <bson/bson.h>
++#include <bson.h>

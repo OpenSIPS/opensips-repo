@@ -1,0 +1,23 @@
+[ol7_latest]
+name=Oracle Linux 7 Latest ($basearch)
+baseurl=https://yum.oracle.com/repo/OracleLinux/OL7/latest/$basearch/
+gpgkey=https://yum.oracle.com/RPM-GPG-KEY-oracle-ol7
+gpgcheck=1
+enabled=1
+skip_if_unavailable=0
+
+[ol7_optional_latest]
+name=Oracle Linux 7 Optional Latest ($basearch)
+baseurl=https://yum.oracle.com/repo/OracleLinux/OL7/optional/latest/$basearch/
+gpgkey=https://yum.oracle.com/RPM-GPG-KEY-oracle-ol7
+gpgcheck=1
+enabled=1
+skip_if_unavailable=0
+
+[ol7_developer_epel]
+name=Oracle Linux 7 EPEL archive ($basearch)
+baseurl=https://yum.oracle.com/repo/OracleLinux/OL7/developer_EPEL/$basearch/
+gpgkey=https://dl.fedoraproject.org/pub/epel/RPM-GPG-KEY-EPEL-7
+gpgcheck=1
+enabled=1
+skip_if_unavailable=0

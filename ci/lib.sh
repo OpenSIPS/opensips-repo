@@ -200,6 +200,8 @@ docker_image_for_target() {
     fi
 
     case "$DISTR_ID-$DISTR_VER" in
+        el-7) printf 'oraclelinux:7-slim\n' ;;
+        el-8) printf 'rockylinux/rockylinux:8\n' ;;
         el-9) printf 'rockylinux/rockylinux:9\n' ;;
         el-10) printf 'rockylinux/rockylinux:10\n' ;;
         st-9) printf 'quay.io/centos/centos:stream9\n' ;;
@@ -385,6 +387,27 @@ stage_source_tree() {
     mkdir -p "$dest"
     rsync -a --delete --exclude '.git' "$source_repo/" "$dest/"
     printf '%s\n' "$git_release" >"$dest/.gitrevision"
+}
+
+apply_rpm_compat_patches() {
+    local project_name="$1" target="$2" source_tree="$3"
+    local patch_file="$LIB_DIR/rpm-patches/opensips-el7-libmongoc1.patch"
+    local source_parent
+
+    if [[ "$project_name" != "opensips" || "$target" != "el-7/"* ]]; then
+        return 0
+    fi
+
+    # Staged sources live under the builder's checkout. Prevent Git from finding
+    # that parent repository and silently skipping paths outside its cwd prefix.
+    source_parent="$(cd "$source_tree/.." && pwd -P)" || return
+
+    # Temporary for releases and nightly builds until compatibility is fixed upstream.
+    log "Apply EL7 compatibility patch: ${patch_file##*/}"
+    GIT_CEILING_DIRECTORIES="$source_parent" git -C "$source_tree" \
+        apply --check --unidiff-zero "$patch_file" || return
+    GIT_CEILING_DIRECTORIES="$source_parent" git -C "$source_tree" \
+        apply --verbose --unidiff-zero "$patch_file"
 }
 
 rpm_sign_files() {

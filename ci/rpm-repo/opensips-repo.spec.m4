@@ -1,3 +1,8 @@
+%if 0%{?rhel} > 0 && 0%{?rhel} < 8
+%global _source_payload w2.xzdio
+%global _binary_payload w2.xzdio
+%endif
+
 Name:           opensips-repo-_TYPE_
 Version:        _MVERSION_
 Release:        _RELEASE_%{?dist}

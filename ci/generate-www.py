@@ -538,7 +538,7 @@ def render_site() -> None:
         nav=active_nav(rpm_nav, "/"),
         repo_kind="rpm",
         package_name="RPMs",
-        description="OpenSIPS Project official DNF repository for Red Hat compatible and Fedora packages.",
+        description="OpenSIPS Project official YUM/DNF repository for Red Hat compatible and Fedora packages.",
         versions=data["package_versions"],
         targets=data["rpm_targets"],
         arches=data["rpm_arches"],

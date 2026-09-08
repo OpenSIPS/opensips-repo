@@ -23,6 +23,8 @@ set -o pipefail
 : "${HOST_GID:=}"
 : "${RPM_EXTRA_LOCAL_RPMS:=}"
 
+source /ci/rpm-build-env.sh
+
 restore_output_owner() {
     if [[ "$HOST_UID" =~ ^[0-9]+$ && "$HOST_GID" =~ ^[0-9]+$ && -d /out ]]; then
         chown -R "$HOST_UID:$HOST_GID" /out || true
@@ -32,25 +34,25 @@ restore_output_owner() {
 trap restore_output_owner EXIT
 
 install_build_tools() {
-    if command -v dnf >/dev/null 2>&1; then
-        dnf -y install dnf-plugins-core || true
-        if [[ "$DISTR_ID" == "el" || "$DISTR_ID" == "st" ]]; then
-            if [[ "$DISTR_VER" == "8" ]]; then
-                dnf -y config-manager --set-enabled powertools || true
-            else
-                dnf -y config-manager --set-enabled crb || true
-            fi
-        fi
-        dnf -y install epel-release || true
-        dnf -y install rpm-build rpm-sign redhat-rpm-config make gcc gcc-c++ git tar gzip sed m4 which findutils python3 python3-setuptools ca-certificates perl-devel perl-generators
-    else
-        echo "DNF not found" >&2
-        exit 1
+    local packages=(
+        rpm-build rpm-sign redhat-rpm-config make gcc gcc-c++ git tar gzip xz
+        sed patch m4 which findutils ca-certificates perl perl-devel
+    )
+
+    rpm_init
+    rpm_prepare_build_repositories
+
+    # EL7 gets Python 3 and its RPM macros from EPEL as build dependencies of
+    # python-opensips/opensips-cli. Its package names differ from EL8+.
+    if [[ "$DISTR_ID" != "el" || "$DISTR_VER" != "7" ]]; then
+        packages+=(python3 python3-setuptools perl-generators)
     fi
+    rpm_install "${packages[@]}"
 }
 
 prepare_spec() {
     local spec_source="" spec="/root/rpmbuild/SPECS/${PROJECT}.spec"
+    local macro_rhel="0" macro_fedora="0"
     if [[ -f "/src/packaging/redhat_fedora/${PROJECT}.spec" ]]; then
         spec_source="/src/packaging/redhat_fedora/${PROJECT}.spec"
     elif [[ -f "/src/packaging/fedora/${PROJECT}.spec" ]]; then
@@ -66,6 +68,13 @@ prepare_spec() {
     sed -i "s/^Version:.*/Version:  ${PROD_VER}/" "$spec"
     sed -i "s/^Release:.*/Release:  ${REL}%{?dist}/" "$spec"
 
+    if [[ "$DISTR_ID" == "el" || "$DISTR_ID" == "st" ]]; then
+        macro_rhel="$DISTR_VER"
+    elif [[ "$DISTR_ID" == "fc" ]]; then
+        macro_fedora="$DISTR_VER"
+    fi
+    sed -i "1i%global ${DISTR_ID}${DISTR_VER} 1\n%global fedora ${macro_fedora}\n%global rhel ${macro_rhel}" "$spec"
+
     # Fallback for el/st <10
     if [[ "$(rpm --eval '%{bash_completions_dir}')" == "%{bash_completions_dir}" ]] \
         && ! grep -Eq '^[[:space:]]*%(global|define)[[:space:]]+bash_completions_dir\b' "$spec"; then
@@ -78,9 +87,9 @@ install_build_deps() {
     local local_rpms=()
     if [[ -n "$RPM_EXTRA_LOCAL_RPMS" ]]; then
         read -r -a local_rpms <<<"$RPM_EXTRA_LOCAL_RPMS"
-        dnf -y install --nogpgcheck "${local_rpms[@]}"
+        rpm_install_local "${local_rpms[@]}"
     fi
-    dnf -y builddep "$spec"
+    rpm_builddep "$spec"
 }
 
 build_package() {

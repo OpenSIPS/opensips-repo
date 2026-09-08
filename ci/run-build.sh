@@ -85,11 +85,9 @@ build_repository_rpm() {
         -v "$local_rpm_dir:/repo" \
         "$image" bash -c '
             set -euo pipefail
-            if ! command -v dnf >/dev/null 2>&1; then
-                echo "DNF not found" >&2
-                exit 1
-            fi
-            dnf -y install rpm-build redhat-rpm-config m4 >/dev/null
+            source /ci/rpm-build-env.sh
+            rpm_init
+            rpm_install rpm-build redhat-rpm-config m4 >/dev/null
             /ci/create-rpm-repo-package.sh "$@"
             if [[ "${HOST_UID}" =~ ^[0-9]+$ && "${HOST_GID}" =~ ^[0-9]+$ ]]; then
                 chown -R "${HOST_UID}:${HOST_GID}" /repo || true
@@ -266,6 +264,7 @@ run_rpm_build() {
     mkdir -p "$out"
 
     stage_source_tree "$source_repo" "$(git_short_sha "$source_repo")" "$staged"
+    apply_rpm_compat_patches "$project_name" "$target" "$staged"
 
     log "Build RPM $project_name $prod_ver for $target using $image"
     docker_args=(

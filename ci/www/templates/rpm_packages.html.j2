@@ -20,6 +20,10 @@ function compactOs(value) {
   return value.replace("/", "");
 }
 
+function packageManager(target) {
+  return target.id === "el" && Number(target.version) < 8 ? "yum" : "dnf";
+}
+
 function fillOsSelect(selectedValue) {
   const select = document.getElementById("os");
   select.innerHTML = "";
@@ -40,7 +44,7 @@ function getLink() {
   const packagePath = version + "/" + repoType + "/" + target.value + "/" + arch + "/opensips-repo-" +
     repoType + "-" + version + "-" + repoData.rpm_repo_package_release + "." + target.pure + ".noarch.rpm";
   const link = "https://" + server + "/" + packagePath;
-  const command = "dnf install " + link;
+  const command = packageManager(target) + " install " + link;
   document.getElementById("installCommand").textContent = command;
   document.getElementById("dlink").href = link;
   document.getElementById("epel").style.display =

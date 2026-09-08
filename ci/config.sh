@@ -14,6 +14,8 @@ DEFAULT_TARGETS=(
     ubuntu-resolute/amd64
     ubuntu-noble/amd64
     ubuntu-jammy/amd64
+    el-7/x86_64
+    el-8/x86_64
     el-9/x86_64
     el-10/x86_64
     st-9/x86_64
