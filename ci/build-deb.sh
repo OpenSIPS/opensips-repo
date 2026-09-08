@@ -30,13 +30,14 @@ restore_output_owner() {
 trap restore_output_owner EXIT
 
 configure_apt_sources() {
-    if [[ "$DISTR_ID" == "debian" && "$DISTR_VER" == "buster" ]]; then
-        cat >/etc/apt/sources.list <<'EOF'
-deb http://archive.debian.org/debian buster main contrib non-free
-deb http://archive.debian.org/debian-security buster/updates main contrib non-free
-EOF
-        echo 'Acquire::Check-Valid-Until "false";' >/etc/apt/apt.conf.d/99no-check-valid-until
-    fi
+    local sources_override="/ci/apt-sources/${DISTR_ID}-${DISTR_VER}.list"
+
+    [[ -f "$sources_override" ]] || return 0
+
+    echo "Using APT sources override: $sources_override"
+    rm -f /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources
+    rm -rf /var/lib/apt/lists/*
+    cp "$sources_override" /etc/apt/sources.list
 }
 
 install_build_tools() {
