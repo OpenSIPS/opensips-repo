@@ -258,26 +258,28 @@ for mode in $MODES; do
         for target in $BUILD_FOR; do
             parse_distro "$target"
             package_missing=0
-            package_path=""
+            package_paths=()
             if is_deb_distro "$DISTR_NAME"; then
                 mapfile -t components < <(shared_deb_components "$MATRIX_TYPE" "$aux_versions")
                 for component in "${components[@]}"; do
                     component_path="$(deb_repo_package_path_for_component "$DISTR_VER" "$component" "$package_name" "$MATRIX_PROD_DEB" "$REL" all)"
-                    [[ -n "$package_path" ]] || package_path="$component_path"
+                    package_paths+=("$component_path")
                     [[ -f "$component_path" ]] || package_missing=1
                 done
             elif is_rpm_distro "$DISTR_NAME"; then
                 mapfile -t repo_parts < <(shared_rpm_repo_parts "$MATRIX_TYPE" "$aux_versions")
                 for repo_part in "${repo_parts[@]}"; do
                     component_path="$(rpm_repo_package_path_for_part "$repo_part" "$package_name" "$MATRIX_PROD_RPM" "$target" "$REL")"
-                    [[ -n "$package_path" ]] || package_path="$component_path"
+                    package_paths+=("$component_path")
                     [[ -f "$component_path" ]] || package_missing=1
                 done
             else
                 continue
             fi
             if [[ "$package_missing" -eq 0 ]]; then
-                record_matrix_skip "$mode / $project / $target" "$MATRIX_TAG" "$package_path"
+                for component_path in "${package_paths[@]}"; do
+                    record_matrix_skip "$mode / $project / $target" "$MATRIX_TAG" "$component_path"
+                done
                 continue
             fi
             entries+=("$(jq -cn \
