@@ -264,7 +264,6 @@ run_rpm_build() {
     mkdir -p "$out"
 
     stage_source_tree "$source_repo" "$(git_short_sha "$source_repo")" "$staged"
-    apply_rpm_compat_patches "$project_name" "$target" "$staged"
 
     log "Build RPM $project_name $prod_ver for $target using $image"
     docker_args=(
