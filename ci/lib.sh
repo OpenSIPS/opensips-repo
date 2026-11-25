@@ -232,7 +232,7 @@ prepare_git_repo_locked() {
 
     log "Fetching $name"
     remove_git_index_locks "$git_cache"
-    git -C "$git_cache" fetch --all --tags --prune
+    git -C "$git_cache" fetch --all --tags --prune || return
     git -C "$git_cache" clean -dfx
     git -C "$git_cache" reset --hard
     checkout_git_ref "$git_cache" "$ref"
@@ -243,6 +243,9 @@ prepare_git_repo_locked() {
         rm -rf "$dest"
         mkdir -p "$SOURCE_DIR"
         cp -rf "$git_cache" "$dest"
+    elif [[ "$name" == opensips-cli || "$name" == python-opensips ]]; then
+        git -C "$dest" fetch --prune --tags "$git_cache" \
+            '+refs/remotes/origin/*:refs/remotes/origin/*' || return
     fi
 
     log "Checkout $name"

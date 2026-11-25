@@ -440,10 +440,15 @@ build_aux_project() {
 
     case "$type" in
         releases)
-            prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo"
-            tag="$(latest_tag "$repo")"
-            [[ -n "$tag" ]] || { warn "No tags found for $package_name"; return 0; }
-            prepare_git_repo "$repo_name" "$source_url" "$tag" "$repo"
+            # Use the matrix tag only for the selected project.
+            if [[ "$MODE" == "release" && "$BUILD_PROJECT" == "$project_key" && -n "$TAG" ]]; then
+                tag="$TAG"
+            else
+                prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo"
+                tag="$(latest_tag "$repo")"
+                [[ -n "$tag" ]] || { warn "No tags found for $package_name"; return 0; }
+            fi
+            prepare_git_repo "$repo_name" "$source_url" "refs/tags/$tag" "$repo"
             prod_deb="$tag"
             prod_rpm="${tag//-/.}"
             ;;

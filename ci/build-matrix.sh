@@ -130,26 +130,25 @@ resolve_aux_matrix_entry() {
     source_url="$(aux_project_source_url "$project")"
     default_ref="$(aux_project_default_ref "$project")"
     repo="$SOURCE_DIR/${repo_name}.git"
+    prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo" >&2
 
     case "$mode" in
         release)
-            MATRIX_TYPE="releases"
-            prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo" >&2
-            resolved_tag="$(latest_tag "$repo" || true)"
+            resolved_tag="$(latest_tag "$repo")"
             if [[ -z "$resolved_tag" ]]; then
                 printf 'Skipping release / %s: no tags found\n' "$project" >&2
-                return 1
+                return 0
             fi
+            MATRIX_TYPE="releases"
             MATRIX_TAG="$resolved_tag"
             MATRIX_PROD_DEB="$resolved_tag"
             MATRIX_PROD_RPM="${resolved_tag//-/.}"
             ;;
         nightly|devel)
             MATRIX_TYPE="$mode"
-            prepare_git_repo "$repo_name" "$source_url" "$default_ref" "$repo" >&2
             git_release="$(git_short_sha "$repo")"
             git_date="$(git_commit_date "$repo")"
-            last_tag="$(latest_tag "$repo" || true)"
+            last_tag="$(latest_tag "$repo")"
             [[ -n "$last_tag" ]] || last_tag="0.0.0"
             MATRIX_PROD_DEB="${last_tag}~${git_date}~${git_release}"
             MATRIX_PROD_RPM="${last_tag//-/.}.${git_date}.${git_release}"
@@ -244,9 +243,8 @@ for mode in $MODES; do
 
     for project in python cli; do
         contains_word_in_string "$project" "$MATRIX_PROJECTS" || continue
-        if ! resolve_aux_matrix_entry "$mode" "$project"; then
-            continue
-        fi
+        resolve_aux_matrix_entry "$mode" "$project"
+        [[ -n "$MATRIX_TYPE" ]] || continue
         aux_versions="$versions"
         if [[ "$mode" == "release" ]]; then
             aux_versions="$(without_devel_versions "$versions")"
